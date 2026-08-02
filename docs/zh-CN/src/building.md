@@ -18,10 +18,10 @@ cargo build --workspace --release --locked
 准备 Windows 10 22H2 或 Windows 11 x64、Visual Studio 2022 Build Tools（“使用 C++ 的桌面开发”及 Windows SDK）、Rust MSVC x64、mdBook 和 WiX Toolset 3.14。在 Developer PowerShell 中运行：
 
 ```powershell
-./scripts/package-windows.ps1 -Version 0.1.2
+./scripts/package-windows.ps1 -Version 0.1.4
 ```
 
-脚本会构建两个程序和两种手册，并生成 `dist/LitMan-0.1.2-x64.msi`、单文件 `dist/LitMan-0.1.2-portable-x64.exe`，以及包含 `LitMan.exe`、`litman-cli.exe`、许可证和离线手册的便携版 ZIP。MSI 包含 GUI、CLI、开始菜单快捷方式、本地手册、卸载信息，以及可选的 CLI PATH 组件。设置 `LITMAN_CERT_THUMBPRINT` 并传入 `-Sign` 可调用 `signtool`；时间戳地址由 `LITMAN_TIMESTAMP_URL` 控制。
+脚本会构建两个程序和两种手册，并生成 `dist/LitMan-0.1.4-x64.msi`、单文件 `dist/LitMan-0.1.4-portable-x64.exe`，以及包含 `LitMan.exe`、`litman-cli.exe`、许可证和离线手册的便携版 ZIP。MSI 包含 GUI、CLI、开始菜单快捷方式、本地手册、卸载信息，以及可选的 CLI PATH 组件。设置 `LITMAN_CERT_THUMBPRINT` 并传入 `-Sign` 可调用 `signtool`；时间戳地址由 `LITMAN_TIMESTAMP_URL` 控制。
 
 MSI ProductCode 根据版本号和源码内容确定生成。WiX 允许同版本重大升级，因此源码发生变化后的重构建可以直接覆盖已安装版本，无需手工卸载；完全相同的源码仍能复现同一 ProductCode。所有版本必须保持 UpgradeCode 不变。
 
@@ -37,7 +37,7 @@ WiX 默认执行 Windows Installer ICE 验证。`-SkipValidation` 只用于无�
 
 ```console
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
-./scripts/package-macos.sh 0.1.2
+./scripts/package-macos.sh 0.1.4
 ```
 
 脚本用 `lipo` 合并程序，创建 `LitMan.app`、DMG 和 PKG。PKG 安装应用以及 `/usr/local/bin/litman`。签名时设置 `LITMAN_APPLE_IDENTITY` 与 `LITMAN_INSTALLER_IDENTITY`；最终 DMG/PKG 使用 `xcrun notarytool` 和仓库外凭据公证，再用 `xcrun stapler` 附加票据。
@@ -49,8 +49,8 @@ rustup target add x86_64-apple-darwin aarch64-apple-darwin
 安装 `build-essential`、`pkg-config`、`libx11-dev`、`libxkbcommon-dev`、`libgl1-mesa-dev`、`libdbus-1-dev`、`dpkg-dev`、Rust 和 mdBook，然后运行：
 
 ```console
-./scripts/package-deb.sh 0.1.2
-sudo apt install ./dist/litman_0.1.2_amd64.deb
+./scripts/package-deb.sh 0.1.4
+sudo apt install ./dist/litman_0.1.4_amd64.deb
 ```
 
 DEB 包括两个程序、桌面入口、图标、许可证和手册。运行依赖明确列出 X11、OpenGL、D-Bus 和 `xdg-utils`。必须在最旧受支持 Ubuntu 和当前版本上测试。

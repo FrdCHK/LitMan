@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter()][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.1.2',
+    [Parameter()][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.1.4',
     [Parameter()][switch]$Sign,
     [Parameter()][switch]$SkipValidation,
     [Parameter()][string]$WixBin

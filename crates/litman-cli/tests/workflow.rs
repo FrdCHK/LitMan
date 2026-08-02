@@ -88,6 +88,8 @@ fn portable_localized_cli_workflow_and_stable_json() {
         "李伟".into(),
         "--author".into(),
         "Ada Smith".into(),
+        "--date".into(),
+        "2024-05-17".into(),
         "--keyword".into(),
         "中文".into(),
     ]);
@@ -141,7 +143,14 @@ fn portable_localized_cli_workflow_and_stable_json() {
     assert_eq!(found[0]["authors"][1], "Ada Smith");
 
     let table = success(&["--config".into(), path(&config), "list".into()]);
-    assert!(String::from_utf8_lossy(&table.stdout).contains("重要程度"));
+    let table = String::from_utf8(table.stdout).unwrap();
+    let mut lines = table.lines();
+    assert_eq!(lines.next(), Some("ID\t标题\t第一作者\t年份"));
+    let expected_row = format!("{prefix}\t机器学习方法\t李伟 等\t2024");
+    assert_eq!(lines.next(), Some(expected_row.as_str()));
+    assert!(!table.contains("重要程度"));
+    assert!(!table.contains("状态"));
+    assert!(!table.contains("Ada Smith"));
 
     let backup = temporary.path().join("backup");
     success(&[

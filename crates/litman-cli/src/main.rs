@@ -518,26 +518,55 @@ fn print_papers(papers: &[Paper], format: OutputFormat, locale: Locale) -> litma
         return Ok(());
     }
     println!(
-        "ID\t{}\t{}\t{}\t{}",
-        locale.text("importance"),
+        "ID\t{}\t{}\t{}",
         locale.text("title"),
-        locale.text("authors"),
-        locale.text("status")
+        locale.text("author"),
+        locale.text("year")
     );
     for paper in papers {
         println!(
-            "{}\t{}\t{}\t{}\t{}",
-            &paper.id[..8],
-            paper
-                .importance
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".into()),
-            paper.display_title().replace('\t', " "),
-            paper.authors.join("; ").replace('\t', " "),
-            locale.text(paper.file_status.as_str())
+            "{}\t{}\t{}\t{}",
+            paper.id.get(..8).unwrap_or(&paper.id),
+            clean_table_cell(&paper.display_title()),
+            compact_authors(&paper.authors, locale),
+            publication_year(paper.publication_date.as_deref())
         );
     }
     Ok(())
+}
+
+fn compact_authors(authors: &[String], locale: Locale) -> String {
+    let Some(first) = authors.first() else {
+        return "-".into();
+    };
+    let first = clean_table_cell(first);
+    if authors.len() == 1 {
+        first
+    } else if locale.0 == Language::ZhCn {
+        format!("{first} 等")
+    } else {
+        format!("{first} et al.")
+    }
+}
+
+fn publication_year(publication_date: Option<&str>) -> String {
+    publication_date
+        .and_then(|date| {
+            date.split(|character: char| !character.is_ascii_digit())
+                .find(|part| part.len() >= 4)
+        })
+        .map(|digits| digits[..4].to_owned())
+        .unwrap_or_else(|| "-".into())
+}
+
+fn clean_table_cell(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '\t' | '\r' | '\n' => ' ',
+            _ => character,
+        })
+        .collect()
 }
 
 fn print_details(paper: &Paper, groups: &[String], locale: Locale) {
@@ -617,5 +646,40 @@ impl From<StatusArg> for FileStatus {
             StatusArg::Missing => Self::Missing,
             StatusArg::Error => Self::Error,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_authors_are_compact_and_localized() {
+        let authors = vec!["李伟".into(), "Ada Smith".into()];
+        assert_eq!(
+            compact_authors(&authors, Locale::new(Language::En)),
+            "李伟 et al."
+        );
+        assert_eq!(
+            compact_authors(&authors, Locale::new(Language::ZhCn)),
+            "李伟 等"
+        );
+        assert_eq!(
+            compact_authors(&authors[..1], Locale::new(Language::En)),
+            "李伟"
+        );
+        assert_eq!(compact_authors(&[], Locale::new(Language::En)), "-");
+    }
+
+    #[test]
+    fn table_year_uses_the_first_four_digit_year() {
+        assert_eq!(publication_year(Some("2024-05-17")), "2024");
+        assert_eq!(publication_year(Some("March 2023")), "2023");
+        assert_eq!(publication_year(None), "-");
+    }
+
+    #[test]
+    fn table_cells_cannot_create_extra_rows_or_columns() {
+        assert_eq!(clean_table_cell("A\tB\nC\rD"), "A B C D");
     }
 }

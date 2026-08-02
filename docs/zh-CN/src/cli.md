@@ -8,6 +8,8 @@ litman --config 路径 [--language system|en|zh-CN] 命令
 
 普通表格、帮助、提示和错误可以本地化。供自动化使用的 JSON 字段名和枚举值始终保持英文和稳定。论文可以使用完整 UUID 或无歧义的 UUID 前缀指定。
 
+`list` 和 `search` 的普通表格有意保持简洁，只包含短 ID、“标题”“第一作者”和“年份”。存在多位作者时，作者列显示第一作者并加“等”。表格不显示重要程度或文件可用性；如需查看单篇文献的完整详情，请使用 `show`，如需全部稳定字段，请使用 `--format json`。
+
 ```text
 litman init --config FILE --root DIR [--language system|en|zh-CN]
 litman scan [--refresh-metadata]

@@ -8,6 +8,8 @@ litman --config PATH [--language system|en|zh-CN] COMMAND
 
 Human output, help, prompts, and errors are localized. JSON keys and enum values remain English and stable for automation. A paper may be named by its full UUID or an unambiguous UUID prefix.
 
+The human-readable output of `list` and `search` is intentionally compact: it contains the short **ID**, **Title**, **First author**, and **Year**. When a paper has multiple authors, the author cell uses the first name followed by `et al.`. It does not display importance or file availability; use `show` for one paper's full details or `--format json` for all stable fields.
+
 ```text
 litman init --config FILE --root DIR [--language system|en|zh-CN]
 litman scan [--refresh-metadata]
