@@ -1,0 +1,47 @@
+Name:           litman
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Local-first literature manager
+License:        GPLv3
+Source0:        %{name}-%{version}.tar.gz
+
+BuildRequires:  gcc, gcc-c++, make, pkgconfig
+BuildRequires:  libX11-devel, libXcursor-devel, libXi-devel, libXrandr-devel
+BuildRequires:  mesa-libGL-devel, libxkbcommon-devel, dbus-devel
+Requires:       libX11, libXcursor, libXi, libXrandr, mesa-libGL, libxkbcommon, dbus-libs, xdg-utils
+
+%global debug_package %{nil}
+
+%description
+LitMan scans existing PDF directories, stores editable metadata in a portable
+SQLite database, and provides native GUI and CLI interfaces. PDFs are read-only.
+
+%prep
+%setup -q
+
+%build
+cargo build --workspace --release --locked --offline
+
+%install
+rm -rf %{buildroot}
+install -Dpm0755 target/release/litman %{buildroot}%{_bindir}/litman
+install -Dpm0755 target/release/litman-gui %{buildroot}%{_bindir}/litman-gui
+install -Dpm0644 packaging/linux/litman.desktop %{buildroot}%{_datadir}/applications/litman.desktop
+install -Dpm0644 packaging/linux/litman.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/litman.svg
+mkdir -p %{buildroot}%{_docdir}/litman/en %{buildroot}%{_docdir}/litman/zh-CN
+cp -a docs/en/book/. %{buildroot}%{_docdir}/litman/en/
+cp -a docs/zh-CN/book/. %{buildroot}%{_docdir}/litman/zh-CN/
+install -Dpm0644 LICENSE %{buildroot}%{_licensedir}/litman/LICENSE
+install -Dpm0644 crates/litman-gui/assets/LICENSE-NOTO.txt %{buildroot}%{_licensedir}/litman/LICENSE-NOTO.txt
+
+%files
+%{_bindir}/litman
+%{_bindir}/litman-gui
+%{_datadir}/applications/litman.desktop
+%{_datadir}/icons/hicolor/scalable/apps/litman.svg
+%{_docdir}/litman
+%{_licensedir}/litman
+
+%changelog
+* Sun Aug 02 2026 Jingdong Zhang - @VERSION@-1
+- Initial package

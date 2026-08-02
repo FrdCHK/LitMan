@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-22.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux desktop build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libgl1-mesa-dev libdbus-1-dev
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+      - name: Generated fixture and PDF immutability smoke test
+        if: runner.os == 'Linux'
+        run: bash scripts/smoke-pdf-safety.sh
+      - name: Release build
+        run: cargo build --workspace --release --locked
+
+  manuals:
+    name: Offline manuals
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install mdbook --version 0.4.52 --locked
+      - run: mdbook build docs/en
+      - run: mdbook build docs/zh-CN
+      - name: Check internal links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress 'docs/en/book/**/*.html' 'docs/zh-CN/book/**/*.html'
+          fail: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-manuals
+          path: |
+            docs/en/book
+            docs/zh-CN/book
+
+  deb:
+    name: Ubuntu DEB
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libgl1-mesa-dev libdbus-1-dev
+      - run: cargo install mdbook --version 0.4.52 --locked
+      - run: bash scripts/package-deb.sh 0.1.0
+      - run: dpkg-deb --info dist/litman_0.1.0_amd64.deb && dpkg-deb --contents dist/litman_0.1.0_amd64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-deb
+          path: dist/*.deb

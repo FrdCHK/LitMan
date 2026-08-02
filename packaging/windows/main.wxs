@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="$(var.ProductCode)" Name="LitMan" Language="1033" Version="$(var.Version)"
+           Manufacturer="Jingdong Zhang"
+           UpgradeCode="5AC3AE36-C52E-4A8F-BDA0-C3EAE9F8E153">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Platform="x64" Description="Local-first literature manager" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of LitMan is already installed." />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.ProjectDir)\packaging\windows\license.rtf" />
+    <UIRef Id="WixUI_FeatureTree" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="LitMan">
+          <Component Id="GuiExecutable" Guid="*" Win64="yes">
+            <File Id="LitManGuiExe" Source="$(var.SourceDir)\litman-gui.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="CliExecutable" Guid="*" Win64="yes">
+            <File Id="LitManCliExe" Source="$(var.SourceDir)\litman.exe" KeyPath="yes" />
+          </Component>
+          <Component Id="Licenses" Guid="DAE180CB-6F83-4641-860E-6E6EC87B5DA4" Win64="yes">
+            <File Id="LicenseGpl" Source="$(var.ProjectDir)\LICENSE" KeyPath="yes" />
+            <File Id="LicenseNoto" Source="$(var.ProjectDir)\crates\litman-gui\assets\LICENSE-NOTO.txt" />
+          </Component>
+          <Component Id="CliPath" Guid="407924FC-39E9-462F-B3BD-618FA7DF1824" Win64="yes">
+            <Environment Id="PathEnvironment" Name="PATH" Action="set" Part="last"
+                         System="yes" Permanent="no" Value="[INSTALLDIR]" />
+          </Component>
+          <Directory Id="ManualDir" Name="manual">
+            <Directory Id="DocsEn" Name="en" />
+            <Directory Id="DocsZh" Name="zh-CN" />
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="LitMan">
+          <Component Id="StartMenuShortcut" Guid="*" Win64="yes">
+            <Shortcut Id="LitManShortcut" Name="LitMan" Description="Literature manager"
+                      Target="[INSTALLDIR]litman-gui.exe" WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+            <RegistryValue Root="HKLM" Key="Software\LitMan" Name="StartMenuShortcut"
+                           Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Title="LitMan" Level="1" Display="expand">
+      <Feature Id="Application" Title="Application and manuals" Level="1" Absent="disallow">
+        <ComponentRef Id="GuiExecutable" />
+        <ComponentRef Id="CliExecutable" />
+        <ComponentRef Id="Licenses" />
+        <ComponentRef Id="StartMenuShortcut" />
+        <ComponentGroupRef Id="EnglishManual" />
+        <ComponentGroupRef Id="ChineseManual" />
+      </Feature>
+      <Feature Id="PathFeature" Title="Add LitMan CLI to PATH" Description="Register the installation directory in the system PATH." Level="2">
+        <ComponentRef Id="CliPath" />
+      </Feature>
+    </Feature>
+  </Product>
+</Wix>

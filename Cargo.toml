@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/litman-core",
+    "crates/litman-cli",
+    "crates/litman-gui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.2"
+edition = "2024"
+rust-version = "1.97"
+license = "GPL-3.0-only"
+authors = ["Jingdong Zhang"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+blake3 = "1.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+eframe = { version = "0.35", default-features = false }
+egui = "0.35"
+egui_extras = { version = "0.35", default-features = false }
+lopdf = "0.44"
+open = "5.4"
+quick-xml = "0.41"
+rfd = { version = "0.17", default-features = false }
+rusqlite = { version = "0.40", features = ["backup", "bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sys-locale = "0.3"
+tempfile = "3.23"
+thiserror = "2.0"
+toml = "0.9"
+unicode-normalization = "0.1"
+uuid = { version = "1.18", features = ["serde", "v4"] }
+walkdir = "2.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

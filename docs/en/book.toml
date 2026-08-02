@@ -1,0 +1,14 @@
+[book]
+title = "LitMan Manuals"
+authors = ["Jingdong Zhang"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+search.enable = true

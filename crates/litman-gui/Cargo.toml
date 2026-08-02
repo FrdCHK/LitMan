@@ -1,0 +1,23 @@
+[package]
+name = "litman-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native desktop interface for LitMan"
+
+[[bin]]
+name = "litman-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { workspace = true, features = ["accesskit", "default_fonts", "glow", "x11"] }
+egui.workspace = true
+egui_extras.workspace = true
+litman-core = { path = "../litman-core" }
+open.workspace = true
+rfd = { workspace = true, features = ["xdg-portal"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { workspace = true, features = ["accesskit", "default_fonts", "glow", "wgpu"] }

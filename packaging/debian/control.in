@@ -1,0 +1,10 @@
+Package: litman
+Version: @VERSION@
+Section: science
+Priority: optional
+Architecture: amd64
+Maintainer: Jingdong Zhang
+Depends: libx11-6, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-x11-0, libgl1, libegl1, libdbus-1-3, xdg-utils
+Description: Local-first literature manager
+ LitMan scans existing PDF directories, stores editable metadata in a
+ portable SQLite database, and provides native GUI and CLI interfaces.
