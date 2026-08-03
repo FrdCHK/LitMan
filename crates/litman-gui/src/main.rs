@@ -184,6 +184,7 @@ struct LitManApp {
     scan_progress: Option<(usize, usize, String)>,
     auto_scan_pending: bool,
     confirm_delete: bool,
+    confirm_group_delete: Option<String>,
     show_about: bool,
 }
 
@@ -213,6 +214,7 @@ impl LitManApp {
             scan_progress: None,
             auto_scan_pending: false,
             confirm_delete: false,
+            confirm_group_delete: None,
             show_about: false,
         };
         if let Some(path) = config_path {
@@ -227,7 +229,9 @@ impl LitManApp {
                 self.locale = Locale::new(library.config().language);
                 self.config_path = Some(path);
                 self.library = Some(library);
+                self.group_filter = None;
                 self.assignment_group = None;
+                self.confirm_group_delete = None;
                 self.auto_scan_pending = true;
                 self.message.clear();
                 self.reload();
@@ -493,6 +497,7 @@ impl LitManApp {
                     .clicked()
                 {
                     self.group_filter = None;
+                    self.confirm_group_delete = None;
                     self.reload();
                 }
                 let roots = self
@@ -504,6 +509,7 @@ impl LitManApp {
                 for group in roots {
                     self.group_node(ui, &group, 0);
                 }
+                self.group_delete_controls(ui);
                 ui.separator();
                 ui.label(dual(
                     self.locale,
@@ -522,6 +528,7 @@ impl LitManApp {
                             self.assignment_group =
                                 library.group_path(group.id).ok().or(Some(requested_path));
                             self.new_group_path.clear();
+                            self.confirm_group_delete = None;
                             self.reload();
                         }
                         Err(error) => self.message = error.localized(self.locale.0),
@@ -658,6 +665,7 @@ impl LitManApp {
                 .clicked()
             {
                 self.group_filter = Some(path.clone());
+                self.confirm_group_delete = None;
                 self.reload();
             }
         });
@@ -669,6 +677,47 @@ impl LitManApp {
             .collect::<Vec<_>>();
         for child in children {
             self.group_node(ui, &child, depth + 1);
+        }
+    }
+
+    fn group_delete_controls(&mut self, ui: &mut egui::Ui) {
+        let selected_path = self.group_filter.clone();
+        if ui
+            .add_enabled(
+                selected_path.is_some(),
+                egui::Button::new(dual(self.locale, "Delete selected group", "删除所选分组")),
+            )
+            .clicked()
+        {
+            self.confirm_group_delete = selected_path;
+        }
+
+        let Some(path) = self.confirm_group_delete.clone() else {
+            return;
+        };
+        let question = if self.locale.0 == Language::ZhCn {
+            format!("删除分组树“{path}”？")
+        } else {
+            format!("Delete group tree “{path}”?")
+        };
+        ui.label(question);
+        ui.small(dual(
+            self.locale,
+            "This also deletes all nested groups and their assignments. Papers and PDFs are not deleted.",
+            "这也会删除所有嵌套分组及其分组关系，但不会删除文献记录或 PDF。",
+        ));
+        let mut confirm = false;
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            confirm = ui
+                .button(dual(self.locale, "Confirm delete", "确认删除"))
+                .clicked();
+            cancel = ui.button(dual(self.locale, "Cancel", "取消")).clicked();
+        });
+        if confirm {
+            self.delete_group_tree(&path);
+        } else if cancel {
+            self.confirm_group_delete = None;
         }
     }
 
@@ -1189,6 +1238,35 @@ impl LitManApp {
         }
     }
 
+    fn delete_group_tree(&mut self, path: &str) {
+        let Some(library) = self.library.as_mut() else {
+            return;
+        };
+        match library.delete_group(path) {
+            Ok(()) => {
+                if self
+                    .assignment_group
+                    .as_deref()
+                    .is_some_and(|candidate| group_path_is_in_tree(candidate, path))
+                {
+                    self.assignment_group = None;
+                }
+                self.group_filter = None;
+                self.confirm_group_delete = None;
+                self.message = if self.locale.0 == Language::ZhCn {
+                    format!("已删除分组树“{path}”。文献记录和 PDF 均未删除。")
+                } else {
+                    format!("Deleted group tree “{path}”. Papers and PDFs were not deleted.")
+                };
+                self.reload();
+            }
+            Err(error) => {
+                self.confirm_group_delete = None;
+                self.message = error.localized(self.locale.0);
+            }
+        }
+    }
+
     fn remove_selected_record(&mut self) {
         let id = self.editor.paper_id.clone();
         if let Some(library) = self.library.as_mut() {
@@ -1350,6 +1428,13 @@ fn stars(rating: u8) -> String {
     "★".repeat(rating as usize)
 }
 
+fn group_path_is_in_tree(candidate: &str, root: &str) -> bool {
+    candidate == root
+        || candidate
+            .strip_prefix(root)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 fn dual(locale: Locale, english: &'static str, chinese: &'static str) -> &'static str {
     if locale.0 == Language::ZhCn {
         chinese
@@ -1482,6 +1567,14 @@ mod tests {
     fn importance_has_a_readable_non_color_representation() {
         assert_eq!(stars(1), "★");
         assert_eq!(stars(5), "★★★★★");
+    }
+
+    #[test]
+    fn group_tree_membership_respects_path_boundaries() {
+        assert!(group_path_is_in_tree("Research", "Research"));
+        assert!(group_path_is_in_tree("Research/Imaging", "Research"));
+        assert!(!group_path_is_in_tree("Research Notes", "Research"));
+        assert!(!group_path_is_in_tree("Other/Research", "Research"));
     }
 
     #[test]

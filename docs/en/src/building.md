@@ -18,10 +18,10 @@ Unsigned packages are the default. Record the source revision, Rust version, pac
 Use Windows 10 22H2 or Windows 11 x64 with Visual Studio 2022 Build Tools (**Desktop development with C++** and a Windows SDK), Rust MSVC x64, mdBook, and WiX Toolset 3.14. From a Developer PowerShell:
 
 ```powershell
-./scripts/package-windows.ps1 -Version 0.1.4
+./scripts/package-windows.ps1 -Version 0.1.5
 ```
 
-The script builds both binaries and manuals, `dist/LitMan-0.1.4-x64.msi`, a standalone `dist/LitMan-0.1.4-portable-x64.exe`, and a portable ZIP containing `LitMan.exe`, `litman-cli.exe`, licenses, and offline manuals. The MSI installs the GUI and CLI, Start Menu shortcut, local manuals, uninstall metadata, and an optional CLI PATH component. Set `LITMAN_CERT_THUMBPRINT` and pass `-Sign` to invoke `signtool`; timestamp configuration is controlled by `LITMAN_TIMESTAMP_URL`.
+The script builds both binaries and manuals, `dist/LitMan-0.1.5-x64.msi`, a standalone `dist/LitMan-0.1.5-portable-x64.exe`, and a portable ZIP containing `LitMan.exe`, `litman-cli.exe`, licenses, and offline manuals. The MSI installs the GUI and CLI, Start Menu shortcut, local manuals, uninstall metadata, and an optional CLI PATH component. Set `LITMAN_CERT_THUMBPRINT` and pass `-Sign` to invoke `signtool`; timestamp configuration is controlled by `LITMAN_TIMESTAMP_URL`.
 
 MSI ProductCodes are deterministically derived from the version and source contents. WiX permits same-version major upgrades, so a changed rebuild upgrades an installed package without requiring a manual uninstall; an identical rebuild remains reproducible. Keep the UpgradeCode stable across releases.
 
@@ -37,7 +37,7 @@ Use macOS 12 or newer with Xcode command-line tools, both Rust targets, and mdBo
 
 ```console
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
-./scripts/package-macos.sh 0.1.4
+./scripts/package-macos.sh 0.1.5
 ```
 
 The script combines each binary with `lipo`, creates `LitMan.app`, a DMG, and a PKG. The PKG installs the application plus `/usr/local/bin/litman`. For signing, set `LITMAN_APPLE_IDENTITY` and `LITMAN_INSTALLER_IDENTITY`; notarize the final DMG/PKG with `xcrun notarytool` using credentials kept outside the repository, then staple tickets with `xcrun stapler`.
@@ -49,8 +49,8 @@ Smoke-test on both Intel and Apple Silicon, including Gatekeeper, open-PDF, back
 Install `build-essential`, `pkg-config`, `libx11-dev`, `libxkbcommon-dev`, `libgl1-mesa-dev`, `libdbus-1-dev`, `dpkg-dev`, Rust, and mdBook. Run:
 
 ```console
-./scripts/package-deb.sh 0.1.4
-sudo apt install ./dist/litman_0.1.4_amd64.deb
+./scripts/package-deb.sh 0.1.5
+sudo apt install ./dist/litman_0.1.5_amd64.deb
 ```
 
 The DEB includes both binaries, the desktop entry, icon, licenses, and manuals. Its runtime dependencies deliberately name X11, OpenGL, D-Bus, and `xdg-utils`. Test on the oldest supported Ubuntu image and a current release.
