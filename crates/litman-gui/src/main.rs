@@ -41,21 +41,25 @@ fn launch(renderer: eframe::Renderer) -> eframe::Result {
         let path = default_config_path();
         path.is_file().then_some(path)
     });
-    let mut wgpu_options = eframe::WgpuConfiguration::default();
-    #[cfg(windows)]
-    if matches!(renderer, eframe::Renderer::Wgpu)
-        && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup
-    {
-        setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
-    }
     let options = eframe::NativeOptions {
         renderer,
-        wgpu_options,
         viewport: egui::ViewportBuilder::default()
             .with_title("LitMan")
             .with_inner_size([1180.0, 760.0])
             .with_min_inner_size([850.0, 540.0]),
         ..Default::default()
+    };
+    #[cfg(windows)]
+    let options = {
+        let mut options = options;
+        let mut wgpu_options = eframe::WgpuConfiguration::default();
+        if matches!(renderer, eframe::Renderer::Wgpu)
+            && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup
+        {
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+        }
+        options.wgpu_options = wgpu_options;
+        options
     };
     eframe::run_native(
         "LitMan",
