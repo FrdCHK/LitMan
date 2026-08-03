@@ -17,6 +17,8 @@ Unsigned packages are the default. Record the source revision, Rust version, pac
 
 Use Windows 10 22H2 or Windows 11 x64 with Visual Studio 2022 Build Tools (**Desktop development with C++** and a Windows SDK), Rust MSVC x64, mdBook, and WiX Toolset 3.14. From a Developer PowerShell:
 
+Install WiX machine-wide with `winget install --id WiXToolset.WiXToolset --exact --scope machine`. The packaging script discovers WiX through `PATH`, the machine/user `WIX` environment variable, or the standard WiX 3.14 installation directories, so `cargo clean` does not remove it.
+
 ```powershell
 ./scripts/package-windows.ps1 -Version 0.1.5
 ```

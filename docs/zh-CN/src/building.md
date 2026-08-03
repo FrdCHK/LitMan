@@ -17,6 +17,8 @@ cargo build --workspace --release --locked
 
 准备 Windows 10 22H2 或 Windows 11 x64、Visual Studio 2022 Build Tools（“使用 C++ 的桌面开发”及 Windows SDK）、Rust MSVC x64、mdBook 和 WiX Toolset 3.14。在 Developer PowerShell 中运行：
 
+可用 `winget install --id WiXToolset.WiXToolset --exact --scope machine` 在系统范围安装 WiX。打包脚本会从 `PATH`、系统/用户 `WIX` 环境变量或 WiX 3.14 标准安装目录中自动查找工具，因此 `cargo clean` 不会再删除 WiX。
+
 ```powershell
 ./scripts/package-windows.ps1 -Version 0.1.5
 ```

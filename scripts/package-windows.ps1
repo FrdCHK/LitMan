@@ -37,7 +37,27 @@ function Resolve-WixTool([string]$Name) {
         }
         return $candidate
     }
-    return (Get-Command "$Name.exe" -ErrorAction Stop).Source
+    $command = Get-Command "$Name.exe" -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    $wixRoots = @(
+        $env:WIX,
+        [Environment]::GetEnvironmentVariable('WIX', 'Machine'),
+        [Environment]::GetEnvironmentVariable('WIX', 'User'),
+        (Join-Path ${env:ProgramFiles(x86)} 'WiX Toolset v3.14'),
+        (Join-Path $env:ProgramFiles 'WiX Toolset v3.14')
+    )
+    foreach ($root in $wixRoots) {
+        if ([string]::IsNullOrWhiteSpace($root)) {
+            continue
+        }
+        $candidate = Join-Path (Join-Path $root 'bin') "$Name.exe"
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    throw "WiX tool '$Name.exe' was not found. Install WiX Toolset 3.14 machine-wide or pass -WixBin."
 }
 
 function New-DeterministicGuid([string]$Purpose) {
