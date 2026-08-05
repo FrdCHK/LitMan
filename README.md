@@ -1,6 +1,6 @@
 # LitMan
 
-LitMan is a local-first literature manager for existing PDF directories. It provides a native GUI and a scriptable CLI, stores bibliographic edits in a portable SQLite database, and never modifies, moves, or deletes a PDF.
+LitMan is a local-first literature manager for existing PDF directories. It provides a native GUI and a scriptable CLI, stores bibliographic edits in a portable SQLite database, and never modifies, moves, or deletes a PDF. An optional personal-token integration can search SciXplorer through the ADS Developer API, import BibTeX metadata, and retain citations locally.
 
 Author: Jingdong Zhang
 
@@ -30,6 +30,6 @@ Build and release prerequisites are documented in [the English build manual](doc
 
 ## Safety and privacy
 
-LitMan has no telemetry, cloud service, database server, or runtime network dependency. It opens PDFs through the operating system viewer but writes only its TOML configuration, SQLite database, and requested backups. Removing a LitMan record does not remove its PDF.
+LitMan has no telemetry or database server. It requires no network for ordinary library work; only explicit optional SciXplorer searches/imports contact the ADS API, and opening a stored SciXplorer link uses the system browser. A configured personal API token is stored as plain text in the library TOML and its backups. LitMan opens PDFs through the operating system viewer but writes only its TOML configuration, SQLite database, and requested backups. Removing a LitMan record does not remove its PDF.
 
 Copyright © 2026 Jingdong Zhang. LitMan is licensed under the GNU General Public License version 3; see `LICENSE`. The bundled Noto Sans CJK SC font has its own SIL Open Font License in `crates/litman-gui/assets/LICENSE-NOTO.txt`.

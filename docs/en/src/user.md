@@ -17,9 +17,11 @@ schema_version = 1
 database = "literature.sqlite3"
 library_root = "../pdfs"
 language = "system"
+# Optional; obtain this personal token from the ADS user settings page.
+scixplorer_api_token = "your-personal-token"
 ```
 
-The database filename must remain beside the config. A relative root is resolved from the config directory; an absolute root is also allowed. A library can cover nested directories.
+The `scixplorer_api_token` line is optional and is omitted from newly created configurations. The database filename must remain beside the config. A relative root is resolved from the config directory; an absolute root is also allowed. A library can cover nested directories.
 
 ## Scan
 
@@ -45,7 +47,17 @@ LitMan reads PDF Info and common XMP, Dublin Core, and PRISM fields. The effecti
 3. PDF Info value;
 4. blank.
 
-A rescan never overwrites a manual value. **Reset to PDF** removes the selected field's manual override and reveals the current embedded value. For a PDF without metadata, its filename appears only as a visual placeholder; it is not saved as the title until you enter one.
+A rescan never overwrites a manual or SciXplorer-imported value. **Reset to PDF** removes the selected field's manual or BibTeX override and reveals the current embedded value. For a PDF without metadata, its filename appears only as a visual placeholder; it is not saved as the title until you enter one.
+
+## Optional SciXplorer metadata and BibTeX
+
+LitMan can use the [ADS Developer API](https://github.com/adsabs/adsabs-dev-api) that supplies SciXplorer data. This feature is completely optional. With no token configured, LitMan performs no SciXplorer/ADS requests and the metadata sidebar's **SciXplorer** button is disabled.
+
+Generate a personal API token in the [ADS token settings](https://ui.adsabs.harvard.edu/#user/settings/token). In the GUI choose **SciXplorer settings**, enter the token, and press **Save token**. The token is stored as plain text in this library's `library.toml`; it is also included when the configuration is backed up or copied. Protect that file like a password and do not commit or share it. **Remove token** disables new searches and imports without removing BibTeX already stored in the database.
+
+Select a paper and click **SciXplorer** in the metadata sidebar. Search by title, DOI, or ADS/SciXplorer bibcode. LitMan shows up to 20 matching records. Clicking **Use** downloads that record's BibTeX, stores the unmodified BibTeX in SQLite, and fills available title, ordered authors, abstract, publication date, journal or conference, volume, issue, pages, DOI, URL, language, and keywords. Imported values replace the corresponding current values; fields absent from the new BibTeX return to their embedded PDF values if they came from a previous BibTeX import. Later manual edits take precedence and are marked as manual provenance.
+
+When BibTeX is stored, **BibTeX** copies it to the system clipboard and displays a confirmation. **Open SciXplorer** opens `https://scixplorer.org/abs/BIBCODE/abstract` in the default web browser. Both buttons remain available without an API token because they use data already stored locally.
 
 ## Find and organize papers
 
@@ -77,4 +89,4 @@ Opening a newer LitMan database with an older program may be refused. Before upg
 
 If a file is missing, confirm the root and scan again. For a parse error, the diagnostic remains visible; enter metadata manually if needed. If the database is busy, close other LitMan processes and retry. If a GUI renderer fails on Windows, LitMan retries with OpenGL automatically.
 
-All data stays local. LitMan performs no telemetry and needs no network connection at runtime.
+LitMan performs no telemetry. All ordinary library, PDF, search, organization, and backup work stays local and needs no network connection. Only an explicit optional SciXplorer search or import sends the configured token and query/bibcode to the ADS API; opening a SciXplorer link contacts that website through the system browser.

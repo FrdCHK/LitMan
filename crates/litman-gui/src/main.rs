@@ -14,7 +14,8 @@ use egui::{FontData, FontDefinitions, FontFamily};
 use egui_extras::{Column, TableBuilder};
 use litman_core::{
     Config, FileStatus, Group, Language, Library, ListFilter, LitmanError, Locale, Paper,
-    PaperUpdate, ScanEvent, ScanOptions, default_config_path,
+    PaperUpdate, ScanEvent, ScanOptions, ScixplorerClient, ScixplorerRecord, ScixplorerSearchField,
+    default_config_path,
 };
 
 const USER_MANUAL_EN: &str = include_str!("../../../docs/en/src/user.md");
@@ -151,6 +152,24 @@ enum WorkerMessage {
     Done(std::result::Result<(), String>),
 }
 
+enum ScixplorerWorkerMessage {
+    Search(litman_core::Result<Vec<ScixplorerRecord>>),
+    Bibtex {
+        paper_id: String,
+        bibcode: String,
+        result: litman_core::Result<String>,
+    },
+}
+
+struct ScixplorerWindowState {
+    paper_id: String,
+    field: ScixplorerSearchField,
+    query: String,
+    results: Vec<ScixplorerRecord>,
+    busy: bool,
+    error: String,
+}
+
 struct RenameGroupState {
     original_path: String,
     name: String,
@@ -193,6 +212,10 @@ struct LitManApp {
     confirm_delete: bool,
     confirm_group_delete: Option<String>,
     rename_group: Option<RenameGroupState>,
+    scixplorer: Option<ScixplorerWindowState>,
+    scixplorer_receiver: Option<Receiver<ScixplorerWorkerMessage>>,
+    show_scixplorer_settings: bool,
+    scixplorer_token_input: String,
     show_about: bool,
 }
 
@@ -224,6 +247,10 @@ impl LitManApp {
             confirm_delete: false,
             confirm_group_delete: None,
             rename_group: None,
+            scixplorer: None,
+            scixplorer_receiver: None,
+            show_scixplorer_settings: false,
+            scixplorer_token_input: String::new(),
             show_about: false,
         };
         if let Some(path) = config_path {
@@ -242,6 +269,10 @@ impl LitManApp {
                 self.assignment_group = None;
                 self.confirm_group_delete = None;
                 self.rename_group = None;
+                self.scixplorer = None;
+                self.scixplorer_receiver = None;
+                self.show_scixplorer_settings = false;
+                self.scixplorer_token_input.clear();
                 self.auto_scan_pending = true;
                 self.message.clear();
                 self.reload();
@@ -442,6 +473,13 @@ impl LitManApp {
                     }
                     if ui.button(self.locale.text("action.backup")).clicked() {
                         self.backup();
+                    }
+                    if ui
+                        .button(dual(self.locale, "SciXplorer settings", "SciXplorer 设置"))
+                        .clicked()
+                    {
+                        self.show_scixplorer_settings = true;
+                        self.scixplorer_token_input.clear();
                     }
                     if ui.button(self.locale.text("action.manual")).clicked() {
                         self.open_manual();
@@ -1077,6 +1115,72 @@ impl LitManApp {
                             self.message = error.localized(self.locale.0);
                         }
                     });
+                    let selected_paper = self
+                        .papers
+                        .iter()
+                        .find(|paper| paper.id == self.editor.paper_id)
+                        .cloned();
+                    let token_configured = scixplorer_token_configured(self.library.as_ref());
+                    ui.horizontal_wrapped(|ui| {
+                        let search =
+                            ui.add_enabled(token_configured, egui::Button::new("SciXplorer"));
+                        if search.clicked() {
+                            self.open_scixplorer_search();
+                        }
+                        if !token_configured {
+                            search.on_disabled_hover_text(dual(
+                                self.locale,
+                                "Configure an API token in SciXplorer settings first.",
+                                "请先在 SciXplorer 设置中配置 API 令牌。",
+                            ));
+                        }
+
+                        let bibtex = selected_paper
+                            .as_ref()
+                            .and_then(|paper| paper.bibtex.as_deref());
+                        if ui
+                            .add_enabled(bibtex.is_some(), egui::Button::new("BibTeX"))
+                            .on_disabled_hover_text(dual(
+                                self.locale,
+                                "No BibTeX has been imported.",
+                                "尚未导入 BibTeX。",
+                            ))
+                            .clicked()
+                            && let Some(bibtex) = bibtex
+                        {
+                            ui.ctx().copy_text(bibtex.to_owned());
+                            self.message = dual(
+                                self.locale,
+                                "BibTeX copied to the clipboard.",
+                                "BibTeX 已复制到剪贴板。",
+                            )
+                            .into();
+                        }
+
+                        let has_bibcode = selected_paper
+                            .as_ref()
+                            .is_some_and(|paper| paper.bibcode.is_some());
+                        if ui
+                            .add_enabled(
+                                has_bibcode,
+                                egui::Button::new(dual(
+                                    self.locale,
+                                    "Open SciXplorer",
+                                    "打开 SciXplorer",
+                                )),
+                            )
+                            .on_disabled_hover_text(dual(
+                                self.locale,
+                                "No ADS bibcode has been imported.",
+                                "尚未导入 ADS bibcode。",
+                            ))
+                            .clicked()
+                            && let Some(library) = self.library.as_ref()
+                            && let Err(error) = library.open_scixplorer(&self.editor.paper_id)
+                        {
+                            self.message = error.localized(self.locale.0);
+                        }
+                    });
                     ui.horizontal_wrapped(|ui| {
                         ui.label(self.locale.text("importance"));
                         if ui.button("×").clicked() {
@@ -1185,7 +1289,9 @@ impl LitManApp {
                                     "keywords",
                                     "notes",
                                 ] {
-                                    let source = if paper.manual_overrides.contains(field_name) {
+                                    let source = if paper.bibtex_fields.contains(field_name) {
+                                        "SciXplorer/BibTeX"
+                                    } else if paper.manual_overrides.contains(field_name) {
                                         dual(self.locale, "manual", "手工")
                                     } else {
                                         match paper
@@ -1452,6 +1558,399 @@ impl LitManApp {
         }
     }
 
+    fn open_scixplorer_search(&mut self) {
+        if !scixplorer_token_configured(self.library.as_ref()) {
+            self.message = LitmanError::MissingScixplorerToken.localized(self.locale.0);
+            return;
+        }
+        let Some(paper) = self
+            .papers
+            .iter()
+            .find(|paper| paper.id == self.editor.paper_id)
+        else {
+            return;
+        };
+        self.scixplorer = Some(ScixplorerWindowState {
+            paper_id: paper.id.clone(),
+            field: ScixplorerSearchField::Title,
+            query: paper.title.clone().unwrap_or_else(|| paper.display_title()),
+            results: Vec::new(),
+            busy: false,
+            error: String::new(),
+        });
+    }
+
+    fn start_scixplorer_search(
+        &mut self,
+        client: ScixplorerClient,
+        field: ScixplorerSearchField,
+        query: String,
+    ) {
+        let (sender, receiver) = mpsc::channel();
+        self.scixplorer_receiver = Some(receiver);
+        thread::spawn(move || {
+            let result = client.search(field, &query, 20);
+            let _ = sender.send(ScixplorerWorkerMessage::Search(result));
+        });
+    }
+
+    fn start_scixplorer_import(
+        &mut self,
+        client: ScixplorerClient,
+        paper_id: String,
+        bibcode: String,
+    ) {
+        let (sender, receiver) = mpsc::channel();
+        self.scixplorer_receiver = Some(receiver);
+        thread::spawn(move || {
+            let result = client.bibtex(&bibcode);
+            let _ = sender.send(ScixplorerWorkerMessage::Bibtex {
+                paper_id,
+                bibcode,
+                result,
+            });
+        });
+    }
+
+    fn poll_scixplorer(&mut self) {
+        let Some(receiver) = self.scixplorer_receiver.as_ref() else {
+            return;
+        };
+        let message = match receiver.try_recv() {
+            Ok(message) => message,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.scixplorer_receiver = None;
+                if let Some(state) = self.scixplorer.as_mut() {
+                    state.busy = false;
+                    state.error = dual(
+                        self.locale,
+                        "SciXplorer worker stopped unexpectedly.",
+                        "SciXplorer 后台任务意外停止。",
+                    )
+                    .into();
+                }
+                return;
+            }
+        };
+        self.scixplorer_receiver = None;
+        if let Some(state) = self.scixplorer.as_mut() {
+            state.busy = false;
+        }
+        match message {
+            ScixplorerWorkerMessage::Search(Ok(results)) => {
+                if let Some(state) = self.scixplorer.as_mut() {
+                    state.results = results;
+                    state.error.clear();
+                }
+            }
+            ScixplorerWorkerMessage::Search(Err(error)) => {
+                if let Some(state) = self.scixplorer.as_mut() {
+                    state.error = error.localized(self.locale.0);
+                }
+            }
+            ScixplorerWorkerMessage::Bibtex {
+                paper_id,
+                bibcode,
+                result: Ok(bibtex),
+            } => {
+                let imported = self
+                    .library
+                    .as_mut()
+                    .ok_or_else(|| LitmanError::InvalidConfig("no open library".into()))
+                    .and_then(|library| library.store_bibtex(&paper_id, &bibtex));
+                match imported {
+                    Ok(paper) => {
+                        if self.editor.paper_id == paper.id {
+                            self.editor = EditorState::from_paper(&paper);
+                        }
+                        self.message = if self.locale.0 == Language::ZhCn {
+                            format!("已从 SciXplorer 导入 {bibcode} 的 BibTeX 和元数据。")
+                        } else {
+                            format!("Imported BibTeX and metadata for {bibcode} from SciXplorer.")
+                        };
+                        self.scixplorer = None;
+                        self.reload();
+                    }
+                    Err(error) => {
+                        if let Some(state) = self.scixplorer.as_mut() {
+                            state.error = error.localized(self.locale.0);
+                        }
+                    }
+                }
+            }
+            ScixplorerWorkerMessage::Bibtex {
+                result: Err(error), ..
+            } => {
+                if let Some(state) = self.scixplorer.as_mut() {
+                    state.error = error.localized(self.locale.0);
+                }
+            }
+        }
+    }
+
+    fn scixplorer_window(&mut self, root: &mut egui::Ui) {
+        let Some(mut state) = self.scixplorer.take() else {
+            return;
+        };
+        let locale = self.locale;
+        let mut open = true;
+        let mut search = false;
+        let mut import_bibcode = None;
+        let previous_field = state.field;
+        egui::Window::new(dual(locale, "Search SciXplorer", "搜索 SciXplorer"))
+            .open(&mut open)
+            .default_width(680.0)
+            .default_height(520.0)
+            .resizable(true)
+            .show(root.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("scixplorer-search-field")
+                        .selected_text(scixplorer_field_label(locale, state.field))
+                        .show_ui(ui, |ui| {
+                            for field in [
+                                ScixplorerSearchField::Title,
+                                ScixplorerSearchField::Doi,
+                                ScixplorerSearchField::Bibcode,
+                            ] {
+                                ui.selectable_value(
+                                    &mut state.field,
+                                    field,
+                                    scixplorer_field_label(locale, field),
+                                );
+                            }
+                        });
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut state.query).desired_width(f32::INFINITY),
+                    );
+                    if ui
+                        .add_enabled(
+                            !state.busy && !state.query.trim().is_empty(),
+                            egui::Button::new(self.locale.text("search")),
+                        )
+                        .clicked()
+                        || (!state.busy
+                            && !state.query.trim().is_empty()
+                            && response.lost_focus()
+                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
+                    {
+                        search = true;
+                    }
+                });
+                if state.busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(dual(locale, "Contacting ADS…", "正在连接 ADS…"));
+                    });
+                }
+                if !state.error.is_empty() {
+                    ui.colored_label(egui::Color32::RED, &state.error);
+                }
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    if !state.busy && state.results.is_empty() && state.error.is_empty() {
+                        ui.label(dual(
+                            locale,
+                            "Search by title, DOI, or ADS/SciXplorer bibcode.",
+                            "可按标题、DOI 或 ADS/SciXplorer bibcode 搜索。",
+                        ));
+                    }
+                    for record in &state.results {
+                        ui.group(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.strong(if record.title.is_empty() {
+                                        &record.bibcode
+                                    } else {
+                                        &record.title
+                                    });
+                                    ui.label(format!(
+                                        "{} · {}",
+                                        record.bibcode,
+                                        record.publication_date.as_deref().unwrap_or("-")
+                                    ));
+                                    if !record.authors.is_empty() {
+                                        let shown = record
+                                            .authors
+                                            .iter()
+                                            .take(3)
+                                            .cloned()
+                                            .collect::<Vec<_>>()
+                                            .join("; ");
+                                        let suffix = if record.authors.len() > 3 {
+                                            "; …"
+                                        } else {
+                                            ""
+                                        };
+                                        ui.label(format!("{shown}{suffix}"));
+                                    }
+                                    if let Some(doi) = &record.doi {
+                                        ui.label(format!("DOI: {doi}"));
+                                    }
+                                });
+                                if ui
+                                    .add_enabled(
+                                        !state.busy,
+                                        egui::Button::new(dual(locale, "Use", "使用")),
+                                    )
+                                    .clicked()
+                                {
+                                    import_bibcode = Some(record.bibcode.clone());
+                                }
+                            });
+                        });
+                    }
+                });
+            });
+
+        if state.field != previous_field
+            && let Some(paper) = self.papers.iter().find(|paper| paper.id == state.paper_id)
+        {
+            state.query = match state.field {
+                ScixplorerSearchField::Title => {
+                    paper.title.clone().unwrap_or_else(|| paper.display_title())
+                }
+                ScixplorerSearchField::Doi => paper.doi.clone().unwrap_or_default(),
+                ScixplorerSearchField::Bibcode => paper.bibcode.clone().unwrap_or_default(),
+            };
+        }
+
+        if search {
+            state.busy = true;
+            state.error.clear();
+            state.results.clear();
+            match self
+                .library
+                .as_ref()
+                .ok_or_else(|| LitmanError::InvalidConfig("no open library".into()))
+                .and_then(Library::scixplorer_client)
+            {
+                Ok(client) => {
+                    self.start_scixplorer_search(client, state.field, state.query.clone())
+                }
+                Err(error) => {
+                    state.busy = false;
+                    state.error = error.localized(locale.0);
+                }
+            }
+        }
+        if let Some(bibcode) = import_bibcode {
+            state.busy = true;
+            state.error.clear();
+            match self
+                .library
+                .as_ref()
+                .ok_or_else(|| LitmanError::InvalidConfig("no open library".into()))
+                .and_then(Library::scixplorer_client)
+            {
+                Ok(client) => self.start_scixplorer_import(client, state.paper_id.clone(), bibcode),
+                Err(error) => {
+                    state.busy = false;
+                    state.error = error.localized(locale.0);
+                }
+            }
+        }
+        if open {
+            self.scixplorer = Some(state);
+        }
+    }
+
+    fn scixplorer_settings_window(&mut self, root: &mut egui::Ui) {
+        if !self.show_scixplorer_settings {
+            return;
+        }
+        let locale = self.locale;
+        let configured = scixplorer_token_configured(self.library.as_ref());
+        let mut open = self.show_scixplorer_settings;
+        let mut save = false;
+        let mut clear = false;
+        let mut get_token = false;
+        egui::Window::new(dual(
+            locale,
+            "SciXplorer API settings",
+            "SciXplorer API 设置",
+        ))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(480.0)
+        .show(root.ctx(), |ui| {
+            ui.label(if configured {
+                dual(locale, "Token status: configured", "令牌状态：已配置")
+            } else {
+                dual(locale, "Token status: not configured", "令牌状态：未配置")
+            });
+            ui.label(dual(
+                locale,
+                "The personal token is stored as plain text in this library's TOML configuration.",
+                "个人令牌将以明文保存在此文献库的 TOML 配置文件中。",
+            ));
+            ui.label(dual(locale, "New API token", "新 API 令牌"));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.scixplorer_token_input)
+                    .password(true)
+                    .desired_width(f32::INFINITY),
+            );
+            ui.horizontal(|ui| {
+                save = ui
+                    .add_enabled(
+                        !self.scixplorer_token_input.trim().is_empty(),
+                        egui::Button::new(dual(locale, "Save token", "保存令牌")),
+                    )
+                    .clicked();
+                clear = ui
+                    .add_enabled(
+                        configured,
+                        egui::Button::new(dual(locale, "Remove token", "删除令牌")),
+                    )
+                    .clicked();
+                get_token = ui
+                    .button(dual(locale, "Get an ADS token", "获取 ADS 令牌"))
+                    .clicked();
+            });
+        });
+        self.show_scixplorer_settings = open;
+
+        if save {
+            let token = self.scixplorer_token_input.trim().to_owned();
+            if let Some(library) = self.library.as_mut() {
+                match library.set_scixplorer_api_token(Some(token)) {
+                    Ok(()) => {
+                        self.scixplorer_token_input.clear();
+                        self.message = dual(
+                            locale,
+                            "SciXplorer API token configured.",
+                            "SciXplorer API 令牌已配置。",
+                        )
+                        .into();
+                    }
+                    Err(error) => self.message = error.localized(locale.0),
+                }
+            }
+        }
+        if clear && let Some(library) = self.library.as_mut() {
+            match library.set_scixplorer_api_token(None) {
+                Ok(()) => {
+                    self.scixplorer_token_input.clear();
+                    self.scixplorer = None;
+                    self.message = dual(
+                        locale,
+                        "SciXplorer API token removed.",
+                        "SciXplorer API 令牌已删除。",
+                    )
+                    .into();
+                }
+                Err(error) => self.message = error.localized(locale.0),
+            }
+        }
+        if get_token
+            && let Err(error) =
+                open::that_detached("https://ui.adsabs.harvard.edu/#user/settings/token")
+        {
+            self.message = error.to_string();
+        }
+    }
+
     fn about_window(&mut self, root: &mut egui::Ui) {
         if !self.show_about {
             return;
@@ -1498,6 +1997,7 @@ impl LitManApp {
 impl eframe::App for LitManApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_scan();
+        self.poll_scixplorer();
         if self.auto_scan_pending {
             self.auto_scan_pending = false;
             self.begin_scan(false);
@@ -1517,8 +2017,10 @@ impl eframe::App for LitManApp {
             self.paper_table(root);
         }
         self.group_rename_window(root);
+        self.scixplorer_window(root);
+        self.scixplorer_settings_window(root);
         self.about_window(root);
-        if self.scan_receiver.is_some() {
+        if self.scan_receiver.is_some() || self.scixplorer_receiver.is_some() {
             root.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -1626,6 +2128,18 @@ fn metadata_field_label(locale: Locale, field: &str) -> &str {
         "notes" => locale.text("notes"),
         _ => field,
     }
+}
+
+fn scixplorer_field_label(locale: Locale, field: ScixplorerSearchField) -> &'static str {
+    match field {
+        ScixplorerSearchField::Title => locale.text("title"),
+        ScixplorerSearchField::Doi => "DOI",
+        ScixplorerSearchField::Bibcode => "Bibcode",
+    }
+}
+
+fn scixplorer_token_configured(library: Option<&Library>) -> bool {
+    library.is_some_and(|library| library.config().scixplorer_api_token.is_some())
 }
 
 fn argument_config() -> Option<PathBuf> {
@@ -1822,6 +2336,24 @@ mod tests {
         app.create_group_from_input();
         assert_eq!(app.message, "a group with that name already exists");
         assert_eq!(app.new_group_path, "research/imaging");
+    }
+
+    #[test]
+    fn scixplorer_search_activation_follows_optional_token_configuration() {
+        let (_temporary, mut app) = app_with_library();
+        assert!(!scixplorer_token_configured(app.library.as_ref()));
+        app.library
+            .as_mut()
+            .unwrap()
+            .set_scixplorer_api_token(Some("personal-token".into()))
+            .unwrap();
+        assert!(scixplorer_token_configured(app.library.as_ref()));
+        app.library
+            .as_mut()
+            .unwrap()
+            .set_scixplorer_api_token(None)
+            .unwrap();
+        assert!(!scixplorer_token_configured(app.library.as_ref()));
     }
 
     #[test]

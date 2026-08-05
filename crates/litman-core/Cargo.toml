@@ -19,6 +19,7 @@ sys-locale.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 unicode-normalization.workspace = true
+ureq.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 

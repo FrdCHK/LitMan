@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-0.1.7}"
+version="${1:-2.0.0}"
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 dist_dir="$project_dir/dist"
 stage_dir="$project_dir/target/packaging/macos"

@@ -17,9 +17,11 @@ schema_version = 1
 database = "literature.sqlite3"
 library_root = "../pdfs"
 language = "system"
+# 可选；个人令牌可在 ADS 用户设置页面中获取。
+scixplorer_api_token = "你的个人令牌"
 ```
 
-数据库名必须解析为配置文件旁的文件。相对根目录从配置文件目录开始解析，也可使用绝对目录。扫描会包含所有子目录。
+`scixplorer_api_token` 行是可选的，新建配置默认不包含该项。数据库名必须解析为配置文件旁的文件。相对根目录从配置文件目录开始解析，也可使用绝对目录。扫描会包含所有子目录。
 
 ## 扫描
 
@@ -45,7 +47,17 @@ LitMan 会读取 PDF Info 和常见 XMP、Dublin Core、PRISM 字段。最终显
 3. PDF Info 值；
 4. 空值。
 
-重新扫描绝不会覆盖手工值。“恢复 PDF 元数据”会删除指定字段的手工覆盖，让当前内嵌值重新显示。没有元数据时，文件名仅作为界面占位文字；除非用户输入，否则不会保存成题名。
+重新扫描绝不会覆盖手工值或从 SciXplorer 导入的值。“恢复 PDF 元数据”会删除指定字段的手工或 BibTeX 覆盖，让当前内嵌值重新显示。没有元数据时，文件名仅作为界面占位文字；除非用户输入，否则不会保存成题名。
+
+## 可选的 SciXplorer 元数据与 BibTeX
+
+LitMan 可使用为 SciXplorer 提供数据的 [ADS Developer API](https://github.com/adsabs/adsabs-dev-api)。此功能完全可选。未配置令牌时，LitMan 不会向 SciXplorer/ADS 发送请求，元数据侧栏中的 **SciXplorer** 按钮也不可用。
+
+先在 [ADS 令牌设置](https://ui.adsabs.harvard.edu/#user/settings/token)中生成个人 API 令牌。在 GUI 中点击“SciXplorer 设置”，输入令牌后点击“保存令牌”。令牌以明文写入该文献库的 `library.toml`，备份或复制配置时也会被包含。请像保护密码一样保护此文件，切勿提交或分享。“删除令牌”会禁止新的搜索和导入，但不会删除数据库内已经保存的 BibTeX。
+
+选择一篇文献，在元数据侧栏点击 **SciXplorer**，可按标题、DOI 或 ADS/SciXplorer bibcode 搜索。LitMan 最多显示 20 条匹配记录。点击“使用”后，会下载并原样保存该记录的 BibTeX 到 SQLite，同时把其中可用的标题、有序作者、摘要、出版日期、期刊或会议、卷、期、页码、DOI、URL、语言和关键词写入元数据。导入值会替换对应的当前值；如果新 BibTeX 缺少上一次 BibTeX 曾提供的字段，该字段会恢复为 PDF 内嵌值。之后的手工修改优先，并标记为手工来源。
+
+保存 BibTeX 后，点击 **BibTeX** 会复制到系统剪贴板并显示确认消息。“打开 SciXplorer”会用默认浏览器打开 `https://scixplorer.org/abs/BIBCODE/abstract`。这两个按钮使用数据库中已经保存的数据，因此即使删除 API 令牌后仍然可用。
 
 ## 查找和整理文献
 
@@ -77,4 +89,4 @@ LitMan 会读取 PDF Info 和常见 XMP、Dublin Core、PRISM 字段。最终显
 
 文件显示缺失时，请检查根目录后重新扫描。解析错误会保留诊断信息，必要时仍可手工输入元数据。数据库繁忙时，请关闭其他 LitMan 进程再重试。如果 Windows 上 GPU 渲染器初始化失败，LitMan 会自动改用 OpenGL 重试。
 
-所有数据均保存在本地。LitMan 没有遥测，运行时不需要网络连接。
+LitMan 没有遥测。普通的文献库、PDF、搜索、整理和备份操作全部在本地完成，不需要网络。只有用户明确执行可选的 SciXplorer 搜索或导入时，配置的令牌及查询/bibcode 才会发送到 ADS API；打开 SciXplorer 链接时，系统浏览器会访问该网站。

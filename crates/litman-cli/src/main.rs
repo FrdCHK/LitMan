@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litman_core::{
     Config, FileStatus, Language, Library, ListFilter, LitmanError, Locale, Paper, PaperUpdate,
-    ScanEvent, ScanOptions, default_config_path,
+    ScanEvent, ScanOptions, ScixplorerRecord, ScixplorerSearchField, default_config_path,
 };
 use serde::Serialize;
 
@@ -93,6 +93,11 @@ enum Command {
     Open {
         #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
         paper_id: String,
+    },
+    #[command(about = "Search and import from SciXplorer / 从 SciXplorer 搜索和导入")]
+    Scixplorer {
+        #[command(subcommand)]
+        command: ScixplorerCommand,
     },
     #[command(about = "Create an online backup / 创建在线备份")]
     Backup {
@@ -225,6 +230,62 @@ enum RootCommand {
     Set { directory: PathBuf },
 }
 
+#[derive(Subcommand)]
+enum ScixplorerCommand {
+    #[command(about = "Configure the personal ADS API token / 配置个人 ADS API 令牌")]
+    Token {
+        #[command(subcommand)]
+        command: ScixplorerTokenCommand,
+    },
+    #[command(about = "Search ADS/SciXplorer records / 搜索 ADS/SciXplorer 记录")]
+    Search {
+        #[arg(value_enum, help = "Search field: title, doi, or bibcode / 搜索字段")]
+        field: ScixplorerFieldArg,
+        #[arg(help = "Field value to search / 搜索内容")]
+        query: String,
+        #[arg(
+            long,
+            default_value_t = 20,
+            help = "Maximum results, 1-100 / 最大结果数 1-100"
+        )]
+        limit: usize,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "table",
+            help = "Output format / 输出格式"
+        )]
+        format: OutputFormat,
+    },
+    #[command(about = "Download BibTeX and populate one paper / 下载 BibTeX 并填充文献")]
+    Import {
+        #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
+        paper_id: String,
+        #[arg(help = "ADS/SciXplorer bibcode / ADS/SciXplorer bibcode")]
+        bibcode: String,
+    },
+    #[command(about = "Print stored BibTeX / 输出已存储的 BibTeX")]
+    Bibtex {
+        #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
+        paper_id: String,
+    },
+    #[command(about = "Open the stored SciXplorer record / 打开已存储的 SciXplorer 记录")]
+    Open {
+        #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
+        paper_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScixplorerTokenCommand {
+    #[command(about = "Store a token in the library configuration / 将令牌写入文献库配置")]
+    Set { token: String },
+    #[command(about = "Remove the stored token / 删除已存储的令牌")]
+    Clear,
+    #[command(about = "Report whether a token is configured / 报告是否已配置令牌")]
+    Status,
+}
+
 #[derive(Clone, Copy, ValueEnum, Default)]
 enum OutputFormat {
     #[default]
@@ -237,6 +298,13 @@ enum StatusArg {
     Present,
     Missing,
     Error,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ScixplorerFieldArg {
+    Title,
+    Doi,
+    Bibcode,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -425,6 +493,75 @@ fn run(cli: Cli) -> litman_core::Result<()> {
                 library.set_root(directory)?;
             }
         },
+        Command::Scixplorer { command } => match command {
+            ScixplorerCommand::Token { command } => match command {
+                ScixplorerTokenCommand::Set { token } => {
+                    library.set_scixplorer_api_token(Some(token))?;
+                    println!(
+                        "{}",
+                        if locale.0 == Language::ZhCn {
+                            "已配置 SciXplorer API 令牌。"
+                        } else {
+                            "SciXplorer API token configured."
+                        }
+                    );
+                }
+                ScixplorerTokenCommand::Clear => {
+                    library.set_scixplorer_api_token(None)?;
+                    println!(
+                        "{}",
+                        if locale.0 == Language::ZhCn {
+                            "已删除 SciXplorer API 令牌。"
+                        } else {
+                            "SciXplorer API token removed."
+                        }
+                    );
+                }
+                ScixplorerTokenCommand::Status => println!(
+                    "{}",
+                    if library.config().scixplorer_api_token.is_some() {
+                        if locale.0 == Language::ZhCn {
+                            "SciXplorer API 令牌：已配置"
+                        } else {
+                            "SciXplorer API token: configured"
+                        }
+                    } else if locale.0 == Language::ZhCn {
+                        "SciXplorer API 令牌：未配置"
+                    } else {
+                        "SciXplorer API token: not configured"
+                    }
+                ),
+            },
+            ScixplorerCommand::Search {
+                field,
+                query,
+                limit,
+                format,
+            } => {
+                let results = library
+                    .scixplorer_client()?
+                    .search(field.into(), &query, limit)?;
+                match format {
+                    OutputFormat::Json => {
+                        println!("{}", serde_json::to_string_pretty(&results)?)
+                    }
+                    OutputFormat::Table => print_scixplorer_results(&results, locale),
+                }
+            }
+            ScixplorerCommand::Import { paper_id, bibcode } => {
+                let bibtex = library.scixplorer_client()?.bibtex(&bibcode)?;
+                let paper = library.store_bibtex(&paper_id, &bibtex)?;
+                print_details(&paper, &[], locale);
+            }
+            ScixplorerCommand::Bibtex { paper_id } => {
+                let bibtex = library.paper_bibtex(&paper_id)?;
+                print!("{bibtex}");
+                if !bibtex.ends_with('\n') {
+                    println!();
+                }
+            }
+            ScixplorerCommand::Open { paper_id } => library.open_scixplorer(&paper_id)?,
+        },
         Command::Open { paper_id } => library.open_pdf(&paper_id)?,
         Command::Backup { destination } => println!("{}", library.backup(destination)?.display()),
         Command::Manual => open_manual(language)?,
@@ -535,6 +672,29 @@ fn print_papers(papers: &[Paper], format: OutputFormat, locale: Locale) -> litma
     Ok(())
 }
 
+fn print_scixplorer_results(results: &[ScixplorerRecord], locale: Locale) {
+    if results.is_empty() {
+        println!("{}", locale.text("cli.no_results"));
+        return;
+    }
+    println!(
+        "BIBCODE\t{}\t{}\t{}\tDOI",
+        locale.text("title"),
+        locale.text("author"),
+        locale.text("date")
+    );
+    for record in results {
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            clean_table_cell(&record.bibcode),
+            clean_table_cell(&record.title),
+            compact_authors(&record.authors, locale),
+            clean_table_cell(record.publication_date.as_deref().unwrap_or("-")),
+            clean_table_cell(record.doi.as_deref().unwrap_or("-")),
+        );
+    }
+}
+
 fn compact_authors(authors: &[String], locale: Locale) -> String {
     let Some(first) = authors.first() else {
         return "-".into();
@@ -618,6 +778,7 @@ fn print_details(paper: &Paper, groups: &[String], locale: Locale) {
             .unwrap_or_else(|| locale.text("unrated").into())
     );
     println!("DOI: {}", paper.doi.as_deref().unwrap_or(""));
+    println!("Bibcode: {}", paper.bibcode.as_deref().unwrap_or(""));
     println!("{}: {}", locale.text("groups"), groups.join("; "));
     println!("{}: {}", locale.text("file"), paper.relative_path);
     println!(
@@ -681,6 +842,16 @@ impl From<StatusArg> for FileStatus {
             StatusArg::Present => Self::Present,
             StatusArg::Missing => Self::Missing,
             StatusArg::Error => Self::Error,
+        }
+    }
+}
+
+impl From<ScixplorerFieldArg> for ScixplorerSearchField {
+    fn from(value: ScixplorerFieldArg) -> Self {
+        match value {
+            ScixplorerFieldArg::Title => Self::Title,
+            ScixplorerFieldArg::Doi => Self::Doi,
+            ScixplorerFieldArg::Bibcode => Self::Bibcode,
         }
     }
 }

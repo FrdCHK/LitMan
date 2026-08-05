@@ -22,6 +22,12 @@ pub enum LitmanError {
     InvalidImportance,
     #[error("the requested field cannot be reset: {0}")]
     InvalidField(String),
+    #[error("SciXplorer API token is not configured")]
+    MissingScixplorerToken,
+    #[error("SciXplorer: {0}")]
+    Scixplorer(String),
+    #[error("BibTeX is not available for paper: {0}")]
+    BibtexNotFound(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -51,6 +57,9 @@ impl LitmanError {
             Self::DuplicateGroup => "同名分组已经存在".into(),
             Self::InvalidImportance => "重要程度必须在 1 到 5 之间".into(),
             Self::InvalidField(field) => format!("无法重置指定字段：{field}"),
+            Self::MissingScixplorerToken => "尚未配置 SciXplorer API 令牌".into(),
+            Self::Scixplorer(detail) => format!("SciXplorer：{detail}"),
+            Self::BibtexNotFound(id) => format!("文献没有可用的 BibTeX：{id}"),
             Self::Io(error) => format!("输入/输出错误：{error}"),
             Self::Database(error) => format!("数据库错误：{error}"),
             Self::TomlDecode(error) => format!("TOML 读取错误：{error}"),

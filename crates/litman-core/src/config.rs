@@ -42,6 +42,9 @@ pub struct Config {
     pub library_root: PathBuf,
     #[serde(default)]
     pub language: Language,
+    /// Optional personal token for the ADS Developer API used by SciXplorer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scixplorer_api_token: Option<String>,
 }
 
 impl Config {
@@ -51,6 +54,7 @@ impl Config {
             database: PathBuf::from("literature.sqlite3"),
             library_root,
             language: Language::System,
+            scixplorer_api_token: None,
         }
     }
 
@@ -123,6 +127,15 @@ impl Config {
                 "library_root cannot be empty".into(),
             ));
         }
+        if self
+            .scixplorer_api_token
+            .as_deref()
+            .is_some_and(|token| token.trim().is_empty() || token.chars().any(char::is_control))
+        {
+            return Err(LitmanError::InvalidConfig(
+                "SciXplorer API token cannot be blank or contain control characters".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -191,5 +204,33 @@ mod tests {
         assert_eq!(Config::load(&path).unwrap(), config);
         assert!(path.is_file());
         assert!(!backup_path(&path).exists());
+    }
+
+    #[test]
+    fn optional_scixplorer_token_round_trips_without_changing_the_schema() {
+        let temporary = TempDir::new().unwrap();
+        let path = temporary.path().join("library.toml");
+        let config = Config::new(PathBuf::from("papers"));
+        config.save(&path).unwrap();
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("scixplorer_api_token")
+        );
+
+        let mut configured = config;
+        configured.scixplorer_api_token = Some("personal-token".into());
+        configured.save(&path).unwrap();
+        assert_eq!(
+            Config::load(&path).unwrap().scixplorer_api_token.as_deref(),
+            Some("personal-token")
+        );
+    }
+
+    #[test]
+    fn unsafe_scixplorer_tokens_are_rejected() {
+        let mut config = Config::new(PathBuf::from("papers"));
+        config.scixplorer_api_token = Some("token\nheader".into());
+        assert!(config.validate().is_err());
     }
 }

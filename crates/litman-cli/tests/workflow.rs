@@ -48,6 +48,41 @@ fn portable_localized_cli_workflow_and_stable_json() {
         "--language".into(),
         "zh-CN".into(),
     ]);
+    success(&[
+        "--config".into(),
+        path(&config),
+        "scixplorer".into(),
+        "token".into(),
+        "set".into(),
+        "test-personal-token".into(),
+    ]);
+    let token_status = success(&[
+        "--config".into(),
+        path(&config),
+        "scixplorer".into(),
+        "token".into(),
+        "status".into(),
+    ]);
+    let token_status = String::from_utf8(token_status.stdout).unwrap();
+    assert!(token_status.contains("已配置"));
+    assert!(!token_status.contains("test-personal-token"));
+    assert!(
+        fs::read_to_string(&config)
+            .unwrap()
+            .contains("test-personal-token")
+    );
+    success(&[
+        "--config".into(),
+        path(&config),
+        "scixplorer".into(),
+        "token".into(),
+        "clear".into(),
+    ]);
+    assert!(
+        !fs::read_to_string(&config)
+            .unwrap()
+            .contains("scixplorer_api_token")
+    );
     success(&["--config".into(), path(&config), "scan".into()]);
 
     let listed = success(&[

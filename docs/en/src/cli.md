@@ -27,11 +27,19 @@ litman group add PATH PAPER_ID ...
 litman group remove PATH PAPER_ID ...
 litman root set DIR
 litman open PAPER_ID
+litman scixplorer token set TOKEN
+litman scixplorer token status|clear
+litman scixplorer search title|doi|bibcode QUERY [--limit N] [--format table|json]
+litman scixplorer import PAPER_ID BIBCODE
+litman scixplorer bibtex PAPER_ID
+litman scixplorer open PAPER_ID
 litman backup DESTINATION
 litman manual
 ```
 
 Repeated `--author` and `--keyword` values preserve order. `--clear title`, for example, creates an explicit blank manual value. Use the GUI's **Reset to PDF** action to remove an override and return to embedded metadata. Use `--interactive` to fill fields in a terminal.
+
+SciXplorer commands are optional. `token set` saves the personal ADS Developer API token as plain text in the selected library's TOML configuration; shell command history may also retain a token entered on the command line. `token status` never prints the token. `search` queries ADS by one selected field, with a default limit of 20 and a maximum of 100. `import` downloads BibTeX for a bibcode, stores it, and fills the selected paper's metadata. `bibtex` writes the stored entry unchanged to standard output, so it can be redirected to a `.bib` file. `open` opens the stored SciXplorer abstract URL in the system browser. Search and import require a configured token; stored BibTeX output and links do not.
 
 Examples:
 
@@ -42,6 +50,10 @@ litman --config D:/library/library.toml edit 1b3a --title "Correct title" --auth
 litman --config D:/library/library.toml group create "Thesis/Methods"
 litman --config D:/library/library.toml group add "Thesis/Methods" 1b3a 57c2
 litman --config D:/library/library.toml rate 1b3a 5
+litman --config D:/library/library.toml scixplorer token set PERSONAL_TOKEN
+litman --config D:/library/library.toml scixplorer search doi "10.1111/j.1365-2966.2008.13087.x"
+litman --config D:/library/library.toml scixplorer import 1b3a 2008MNRAS.386..619C
+litman --config D:/library/library.toml scixplorer bibtex 1b3a > references.bib
 ```
 
 Exit status is zero on success, 2 for command-line syntax errors, 3 when an ID is missing or ambiguous, and 4 for other library or I/O failures.

@@ -82,6 +82,13 @@ pub struct Paper {
     pub language: Option<String>,
     pub keywords: Vec<String>,
     pub notes: Option<String>,
+    /// Raw BibTeX returned by the ADS export API.
+    #[serde(skip_serializing)]
+    pub bibtex: Option<String>,
+    /// Canonical ADS/SciXplorer bibcode, normally the BibTeX citation key.
+    pub bibcode: Option<String>,
+    /// Metadata fields most recently populated from `bibtex`.
+    pub bibtex_fields: BTreeSet<String>,
     pub importance: Option<u8>,
     pub page_count: Option<u32>,
     pub pdf_version: Option<String>,
@@ -128,6 +135,23 @@ pub struct Group {
     pub id: i64,
     pub name: String,
     pub parent_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScixplorerSearchField {
+    Title,
+    Doi,
+    Bibcode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScixplorerRecord {
+    pub bibcode: String,
+    pub title: String,
+    pub authors: Vec<String>,
+    pub publication_date: Option<String>,
+    pub doi: Option<String>,
+    pub publication: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
