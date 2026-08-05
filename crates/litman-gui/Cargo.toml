@@ -21,3 +21,6 @@ rfd = { workspace = true, features = ["xdg-portal"] }
 
 [target.'cfg(windows)'.dependencies]
 eframe = { workspace = true, features = ["accesskit", "default_fonts", "glow", "wgpu"] }
+
+[dev-dependencies]
+tempfile.workspace = true

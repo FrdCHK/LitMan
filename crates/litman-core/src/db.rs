@@ -277,6 +277,14 @@ impl Library {
             .collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    pub fn group_exists(&self, path: &str) -> Result<bool> {
+        match self.resolve_group_path(path) {
+            Ok(_) => Ok(true),
+            Err(LitmanError::GroupNotFound(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn create_group(&mut self, path: &str) -> Result<Group> {
         let components = group_components(path)?;
         let transaction = self.connection.transaction()?;
@@ -1012,9 +1020,30 @@ mod tests {
         let (_temporary, mut library) = library();
         let group = library.create_group("Research/机器学习").unwrap();
         assert_eq!(library.group_path(group.id).unwrap(), "Research/机器学习");
+        assert!(library.group_exists("research/机器学习").unwrap());
+        assert!(!library.group_exists("Research/不存在").unwrap());
         assert_eq!(
             library.create_group("research/机器学习").unwrap().id,
             group.id
+        );
+    }
+
+    #[test]
+    fn group_rename_rejects_an_existing_sibling_name() {
+        let (_temporary, mut library) = library();
+        library.create_group("Research/Imaging").unwrap();
+        library.create_group("Research/Astrometry").unwrap();
+
+        assert!(matches!(
+            library.rename_group("Research/Imaging", "ASTROMETRY"),
+            Err(LitmanError::DuplicateGroup)
+        ));
+        let renamed = library
+            .rename_group("Research/Imaging", "Calibration")
+            .unwrap();
+        assert_eq!(
+            library.group_path(renamed.id).unwrap(),
+            "Research/Calibration"
         );
     }
 

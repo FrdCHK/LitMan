@@ -13,8 +13,8 @@ use eframe::egui;
 use egui::{FontData, FontDefinitions, FontFamily};
 use egui_extras::{Column, TableBuilder};
 use litman_core::{
-    Config, FileStatus, Group, Language, Library, ListFilter, Locale, Paper, PaperUpdate,
-    ScanEvent, ScanOptions, default_config_path,
+    Config, FileStatus, Group, Language, Library, ListFilter, LitmanError, Locale, Paper,
+    PaperUpdate, ScanEvent, ScanOptions, default_config_path,
 };
 
 const USER_MANUAL_EN: &str = include_str!("../../../docs/en/src/user.md");
@@ -151,6 +151,13 @@ enum WorkerMessage {
     Done(std::result::Result<(), String>),
 }
 
+struct RenameGroupState {
+    original_path: String,
+    name: String,
+    warning: String,
+    request_focus: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SortColumn {
     Importance,
@@ -185,6 +192,7 @@ struct LitManApp {
     auto_scan_pending: bool,
     confirm_delete: bool,
     confirm_group_delete: Option<String>,
+    rename_group: Option<RenameGroupState>,
     show_about: bool,
 }
 
@@ -215,6 +223,7 @@ impl LitManApp {
             auto_scan_pending: false,
             confirm_delete: false,
             confirm_group_delete: None,
+            rename_group: None,
             show_about: false,
         };
         if let Some(path) = config_path {
@@ -232,6 +241,7 @@ impl LitManApp {
                 self.group_filter = None;
                 self.assignment_group = None;
                 self.confirm_group_delete = None;
+                self.rename_group = None;
                 self.auto_scan_pending = true;
                 self.message.clear();
                 self.reload();
@@ -498,6 +508,7 @@ impl LitManApp {
                 {
                     self.group_filter = None;
                     self.confirm_group_delete = None;
+                    self.rename_group = None;
                     self.reload();
                 }
                 let roots = self
@@ -509,7 +520,7 @@ impl LitManApp {
                 for group in roots {
                     self.group_node(ui, &group, 0);
                 }
-                self.group_delete_controls(ui);
+                self.group_controls(ui);
                 ui.separator();
                 ui.label(dual(
                     self.locale,
@@ -520,19 +531,8 @@ impl LitManApp {
                 if ui
                     .button(dual(self.locale, "Create group", "创建分组"))
                     .clicked()
-                    && let Some(library) = self.library.as_mut()
                 {
-                    let requested_path = self.new_group_path.trim().to_owned();
-                    match library.create_group(&requested_path) {
-                        Ok(group) => {
-                            self.assignment_group =
-                                library.group_path(group.id).ok().or(Some(requested_path));
-                            self.new_group_path.clear();
-                            self.confirm_group_delete = None;
-                            self.reload();
-                        }
-                        Err(error) => self.message = error.localized(self.locale.0),
-                    }
+                    self.create_group_from_input();
                 }
                 ui.separator();
                 ui.heading(dual(
@@ -666,6 +666,7 @@ impl LitManApp {
             {
                 self.group_filter = Some(path.clone());
                 self.confirm_group_delete = None;
+                self.rename_group = None;
                 self.reload();
             }
         });
@@ -680,17 +681,36 @@ impl LitManApp {
         }
     }
 
-    fn group_delete_controls(&mut self, ui: &mut egui::Ui) {
+    fn group_controls(&mut self, ui: &mut egui::Ui) {
         let selected_path = self.group_filter.clone();
-        if ui
-            .add_enabled(
-                selected_path.is_some(),
-                egui::Button::new(dual(self.locale, "Delete selected group", "删除所选分组")),
-            )
-            .clicked()
-        {
-            self.confirm_group_delete = selected_path;
-        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    selected_path.is_some(),
+                    egui::Button::new(dual(self.locale, "Rename group", "重命名分组")),
+                )
+                .clicked()
+                && let Some(path) = selected_path.as_deref()
+            {
+                self.rename_group = Some(RenameGroupState {
+                    original_path: path.to_owned(),
+                    name: group_leaf_name(path).to_owned(),
+                    warning: String::new(),
+                    request_focus: true,
+                });
+                self.confirm_group_delete = None;
+            }
+            if ui
+                .add_enabled(
+                    selected_path.is_some(),
+                    egui::Button::new(dual(self.locale, "Delete group", "删除分组")),
+                )
+                .clicked()
+            {
+                self.confirm_group_delete = selected_path.clone();
+                self.rename_group = None;
+            }
+        });
 
         let Some(path) = self.confirm_group_delete.clone() else {
             return;
@@ -732,6 +752,126 @@ impl LitManApp {
             .collect::<Vec<_>>();
         paths.sort_by_key(|path| path.to_lowercase());
         paths
+    }
+
+    fn create_group_from_input(&mut self) {
+        let requested_path = self.new_group_path.trim().to_owned();
+        let Some(library) = self.library.as_mut() else {
+            return;
+        };
+        let result = (|| -> litman_core::Result<String> {
+            if library.group_exists(&requested_path)? {
+                return Err(LitmanError::DuplicateGroup);
+            }
+            let group = library.create_group(&requested_path)?;
+            library.group_path(group.id)
+        })();
+
+        match result {
+            Ok(created_path) => {
+                self.assignment_group = Some(created_path.clone());
+                self.new_group_path.clear();
+                self.confirm_group_delete = None;
+                self.message = if self.locale.0 == Language::ZhCn {
+                    format!("已创建分组“{created_path}”。")
+                } else {
+                    format!("Created group “{created_path}”.")
+                };
+                self.reload();
+            }
+            Err(error) => self.message = error.localized(self.locale.0),
+        }
+    }
+
+    fn group_rename_window(&mut self, root: &mut egui::Ui) {
+        let Some(mut rename) = self.rename_group.take() else {
+            return;
+        };
+        let locale = self.locale;
+        let mut open = true;
+        let mut submit = false;
+        let mut cancel = false;
+        egui::Window::new(dual(locale, "Rename group", "重命名分组"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(320.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(root.ctx(), |ui| {
+                ui.label(if locale.0 == Language::ZhCn {
+                    format!("当前分组：{}", rename.original_path)
+                } else {
+                    format!("Current group: {}", rename.original_path)
+                });
+                ui.label(dual(locale, "New group name", "新分组名称"));
+                let response = ui.text_edit_singleline(&mut rename.name);
+                if response.changed() {
+                    rename.warning.clear();
+                }
+                if rename.request_focus {
+                    response.request_focus();
+                    rename.request_focus = false;
+                }
+                submit |=
+                    response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if !rename.warning.is_empty() {
+                    let warning_color = ui.visuals().warn_fg_color;
+                    ui.colored_label(warning_color, &rename.warning);
+                }
+                ui.horizontal(|ui| {
+                    submit |= ui.button(dual(locale, "Rename", "重命名")).clicked();
+                    cancel = ui.button(dual(locale, "Cancel", "取消")).clicked();
+                });
+            });
+
+        if submit {
+            if let Err(warning) = self.rename_selected_group(&rename.original_path, &rename.name) {
+                rename.warning = warning;
+                self.rename_group = Some(rename);
+            }
+        } else if open && !cancel {
+            self.rename_group = Some(rename);
+        }
+    }
+
+    fn rename_selected_group(
+        &mut self,
+        original_path: &str,
+        new_name: &str,
+    ) -> std::result::Result<(), String> {
+        let new_name = new_name.trim();
+        if new_name.is_empty() || new_name.contains('/') {
+            return Err(
+                LitmanError::InvalidConfig("invalid group name".into()).localized(self.locale.0)
+            );
+        }
+        let candidate_path = group_path_with_leaf(original_path, new_name);
+        let Some(library) = self.library.as_mut() else {
+            return Ok(());
+        };
+        let result = (|| -> litman_core::Result<String> {
+            if library.group_exists(&candidate_path)? {
+                return Err(LitmanError::DuplicateGroup);
+            }
+            let group = library.rename_group(original_path, new_name)?;
+            library.group_path(group.id)
+        })();
+        let renamed_path = result.map_err(|error| error.localized(self.locale.0))?;
+
+        if let Some(path) = self.assignment_group.take() {
+            self.assignment_group = Some(rewrite_group_path(&path, original_path, &renamed_path));
+        }
+        if let Some(path) = self.group_filter.take() {
+            self.group_filter = Some(rewrite_group_path(&path, original_path, &renamed_path));
+        }
+        self.confirm_group_delete = None;
+        self.message = if self.locale.0 == Language::ZhCn {
+            format!("已将分组“{original_path}”重命名为“{renamed_path}”。")
+        } else {
+            format!("Renamed group “{original_path}” to “{renamed_path}”.")
+        };
+        self.reload();
+        Ok(())
     }
 
     fn paper_table(&mut self, root: &mut egui::Ui) {
@@ -1376,6 +1516,7 @@ impl eframe::App for LitManApp {
             self.details_panel(root);
             self.paper_table(root);
         }
+        self.group_rename_window(root);
         self.about_window(root);
         if self.scan_receiver.is_some() {
             root.ctx()
@@ -1434,6 +1575,30 @@ fn group_path_is_in_tree(candidate: &str, root: &str) -> bool {
         || candidate
             .strip_prefix(root)
             .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn group_leaf_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+fn group_path_with_leaf(path: &str, new_name: &str) -> String {
+    path.rsplit_once('/').map_or_else(
+        || new_name.to_owned(),
+        |(parent, _)| format!("{parent}/{new_name}"),
+    )
+}
+
+fn rewrite_group_path(candidate: &str, old_path: &str, new_path: &str) -> String {
+    if candidate == old_path {
+        new_path.to_owned()
+    } else if let Some(suffix) = candidate
+        .strip_prefix(old_path)
+        .filter(|suffix| suffix.starts_with('/'))
+    {
+        format!("{new_path}{suffix}")
+    } else {
+        candidate.to_owned()
+    }
 }
 
 fn dual(locale: Locale, english: &'static str, chinese: &'static str) -> &'static str {
@@ -1544,6 +1709,20 @@ fn html_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn app_with_library() -> (TempDir, LitManApp) {
+        let temporary = TempDir::new().unwrap();
+        let root = temporary.path().join("papers");
+        fs::create_dir(&root).unwrap();
+        let config_path = temporary.path().join("library.toml");
+        let library = Library::init(&config_path, Config::new(root)).unwrap();
+        let mut app = LitManApp::new(None);
+        app.locale = Locale::new(Language::En);
+        app.config_path = Some(config_path);
+        app.library = Some(library);
+        (temporary, app)
+    }
 
     #[test]
     fn editor_tracks_explicit_blanks_and_unchanged_values() {
@@ -1604,6 +1783,81 @@ mod tests {
         assert!(group_path_is_in_tree("Research/Imaging", "Research"));
         assert!(!group_path_is_in_tree("Research Notes", "Research"));
         assert!(!group_path_is_in_tree("Other/Research", "Research"));
+    }
+
+    #[test]
+    fn group_rename_rewrites_only_the_selected_tree() {
+        assert_eq!(group_leaf_name("Research/Imaging"), "Imaging");
+        assert_eq!(
+            group_path_with_leaf("Research/Imaging", "Calibration"),
+            "Research/Calibration"
+        );
+        assert_eq!(
+            rewrite_group_path(
+                "Research/Imaging/Results",
+                "Research/Imaging",
+                "Research/Calibration"
+            ),
+            "Research/Calibration/Results"
+        );
+        assert_eq!(
+            rewrite_group_path(
+                "Research/Imaging Notes",
+                "Research/Imaging",
+                "Research/Calibration"
+            ),
+            "Research/Imaging Notes"
+        );
+    }
+
+    #[test]
+    fn group_creation_reports_success_and_duplicate_warning() {
+        let (_temporary, mut app) = app_with_library();
+        app.new_group_path = "Research/Imaging".into();
+        app.create_group_from_input();
+        assert_eq!(app.message, "Created group “Research/Imaging”.");
+        assert!(app.new_group_path.is_empty());
+
+        app.new_group_path = "research/imaging".into();
+        app.create_group_from_input();
+        assert_eq!(app.message, "a group with that name already exists");
+        assert_eq!(app.new_group_path, "research/imaging");
+    }
+
+    #[test]
+    fn group_rename_preserves_selected_descendant_paths() {
+        let (_temporary, mut app) = app_with_library();
+        let library = app.library.as_mut().unwrap();
+        library.create_group("Research/Imaging/Results").unwrap();
+        library.create_group("Research/Astrometry").unwrap();
+        app.reload();
+        app.group_filter = Some("Research/Imaging".into());
+        app.assignment_group = Some("Research/Imaging/Results".into());
+
+        assert_eq!(
+            app.rename_selected_group("Research/Imaging", "ASTROMETRY")
+                .unwrap_err(),
+            "a group with that name already exists"
+        );
+        app.rename_selected_group("Research/Imaging", "Calibration")
+            .unwrap();
+
+        assert_eq!(app.group_filter.as_deref(), Some("Research/Calibration"));
+        assert_eq!(
+            app.assignment_group.as_deref(),
+            Some("Research/Calibration/Results")
+        );
+        let library = app.library.as_ref().unwrap();
+        assert!(
+            library
+                .group_exists("Research/Calibration/Results")
+                .unwrap()
+        );
+        assert!(!library.group_exists("Research/Imaging").unwrap());
+        assert_eq!(
+            app.message,
+            "Renamed group “Research/Imaging” to “Research/Calibration”."
+        );
     }
 
     #[test]
