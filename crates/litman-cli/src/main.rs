@@ -539,14 +539,50 @@ fn compact_authors(authors: &[String], locale: Locale) -> String {
     let Some(first) = authors.first() else {
         return "-".into();
     };
-    let first = clean_table_cell(first);
-    if authors.len() == 1 {
+    let bundled_first = bundled_first_author(first);
+    let first = clean_table_cell(bundled_first.unwrap_or(first));
+    let has_multiple_authors = authors.len() > 1 || bundled_first.is_some();
+    if !has_multiple_authors {
         first
     } else if locale.0 == Language::ZhCn {
         format!("{first} 等")
     } else {
         format!("{first} et al.")
     }
+}
+
+fn bundled_first_author(value: &str) -> Option<&str> {
+    if let Some(index) = value.find([';', '\n']) {
+        return nonempty_prefix(value, index);
+    }
+
+    let lowercase = value.to_ascii_lowercase();
+    if let Some(index) = lowercase.find(" and ") {
+        return nonempty_prefix(value, index);
+    }
+
+    let (first, remainder) = value.split_once(',')?;
+    let first = first.trim();
+    let next = remainder.split(',').next().unwrap_or_default().trim();
+    let comma_count = value.bytes().filter(|byte| *byte == b',').count();
+    let explicitly_abbreviated = next
+        .to_ascii_lowercase()
+        .trim_end_matches('.')
+        .starts_with("et al");
+    let two_complete_names = looks_like_complete_author(first) && looks_like_complete_author(next);
+
+    (comma_count >= 2 || explicitly_abbreviated || two_complete_names)
+        .then_some(first)
+        .filter(|first| !first.is_empty())
+}
+
+fn nonempty_prefix(value: &str, end: usize) -> Option<&str> {
+    let prefix = value[..end].trim();
+    (!prefix.is_empty()).then_some(prefix)
+}
+
+fn looks_like_complete_author(value: &str) -> bool {
+    value.chars().any(char::is_whitespace) || value.contains('.') || !value.is_ascii()
 }
 
 fn publication_year(publication_date: Option<&str>) -> String {
@@ -669,6 +705,37 @@ mod tests {
             "李伟"
         );
         assert_eq!(compact_authors(&[], Locale::new(Language::En)), "-");
+    }
+
+    #[test]
+    fn table_authors_compact_bundled_metadata_lists() {
+        for (authors, expected_first) in [
+            (
+                "Gaia Collaboration, Klioner S. A., Lindegren L.",
+                "Gaia Collaboration",
+            ),
+            ("Simon Ellingsen, Mark Reid", "Simon Ellingsen"),
+            ("C. MA, et al.", "C. MA"),
+            ("Ada Smith; Grace Hopper", "Ada Smith"),
+            ("Ada Smith and Grace Hopper", "Ada Smith"),
+        ] {
+            assert_eq!(
+                compact_authors(&[authors.into()], Locale::new(Language::En)),
+                format!("{expected_first} et al.")
+            );
+        }
+        assert_eq!(
+            compact_authors(&["刘佳成, 刘牛".into()], Locale::new(Language::ZhCn)),
+            "刘佳成 等"
+        );
+    }
+
+    #[test]
+    fn table_authors_preserve_one_inverted_name() {
+        assert_eq!(
+            compact_authors(&["Smith, Jane".into()], Locale::new(Language::En)),
+            "Smith, Jane"
+        );
     }
 
     #[test]

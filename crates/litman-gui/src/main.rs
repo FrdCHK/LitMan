@@ -814,21 +814,11 @@ impl LitManApp {
                         });
                         row.col(|ui| {
                             let title = paper.display_title();
-                            text_clicked |= ui
-                                .add(
-                                    egui::Label::new(&title).sense(egui::Sense::click()),
-                                )
-                                .on_hover_text(title)
-                                .clicked();
+                            text_clicked |= literature_list_cell(ui, &title).clicked();
                         });
                         row.col(|ui| {
                             let authors = paper.authors.join("; ");
-                            text_clicked |= ui
-                                .add(
-                                    egui::Label::new(&authors).sense(egui::Sense::click()),
-                                )
-                                .on_hover_text(authors)
-                                .clicked();
+                            text_clicked |= literature_list_cell(ui, &authors).clicked();
                         });
                         row.col(|ui| {
                             text_clicked |= ui
@@ -1428,6 +1418,17 @@ fn stars(rating: u8) -> String {
     "★".repeat(rating as usize)
 }
 
+fn literature_list_cell(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Label::new(text)
+            .sense(egui::Sense::click())
+            // We provide the tooltip below. Egui otherwise adds another one when
+            // the table column clips this label, producing duplicate pop-outs.
+            .show_tooltip_when_elided(false),
+    )
+    .on_hover_text(text)
+}
+
 fn group_path_is_in_tree(candidate: &str, root: &str) -> bool {
     candidate == root
         || candidate
@@ -1567,6 +1568,34 @@ mod tests {
     fn importance_has_a_readable_non_color_representation() {
         assert_eq!(stars(1), "★");
         assert_eq!(stars(5), "★★★★★");
+    }
+
+    #[test]
+    fn clipped_literature_cell_registers_one_tooltip() {
+        let context = egui::Context::default();
+        context.memory_mut(|memory| memory.set_everything_is_visible(true));
+        let mut tooltip_ids = None;
+
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+            ui.set_width(20.0);
+            let text = "A title long enough to be clipped by the literature table column";
+            let (_, galley, _) = egui::Label::new(text).layout_in_ui(ui);
+            assert!(galley.elided, "the test label must exercise clipping");
+
+            let response = literature_list_cell(ui, text);
+            tooltip_ids = Some((
+                response.id,
+                egui::Tooltip::next_tooltip_id(ui.ctx(), response.id),
+            ));
+        });
+
+        let (widget_id, next_tooltip_id) = tooltip_ids.expect("the cell should be rendered");
+        assert_eq!(
+            next_tooltip_id,
+            egui::Tooltip::tooltip_id(widget_id, 1),
+            "the explicit tooltip must be the only tooltip registered for this cell"
+        );
     }
 
     #[test]
