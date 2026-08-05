@@ -8,3 +8,5 @@ Depends: libx11-6, libxcursor1, libxi6, libxrandr2, libxkbcommon0, libxkbcommon-
 Description: Local-first literature manager
  LitMan scans existing PDF directories, stores editable metadata in a
  portable SQLite database, and provides native GUI and CLI interfaces.
+ Ordinary actions keep PDFs read-only; an explicit confirmed action can
+ preserve and replace a selected PDF with its publisher version.

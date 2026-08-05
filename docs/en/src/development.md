@@ -10,7 +10,7 @@ The dependency policy favors pure Rust and bundled components. SQLite is bundled
 
 `Config::load` requires schema version 1 and a database filename resolving directly beside the config. Relative `library_root` values resolve from the config directory. `relative_pdf_path` canonicalizes each file, confirms it is inside the canonical root, and serializes components with `/`. Scanner traversal does not follow symlinks.
 
-Never write to a path obtained from a PDF record without first resolving it through the configured root. PDFs are an immutable input boundary.
+Never write to a path obtained from a PDF record without first resolving it through the configured root. Ordinary operations treat PDFs as an immutable input boundary. The sole mutation boundary is explicit confirmed PDF replacement: validate a portable bibcode and canonical containment, stage and parse/hash the new PDF with limits, recheck ownership/collisions, journal every move, update the existing record transactionally, and roll back or recover without guessing.
 
 ## Data model and migrations
 
@@ -34,7 +34,7 @@ The shared `Locale` maps human-facing keys to English and Simplified Chinese. JS
 
 ## GUI threading and accessibility
 
-The GUI owns one `Library` on the UI thread. A scan worker opens its own connection from the config and reports bounded progress messages over a channel. SciXplorer workers receive only a cloned API client and query/bibcode; they return data over a channel, while SQLite writes remain on the UI thread. HTTPS calls use a 30-second global timeout. Cancellation is an atomic flag checked between files. Keep labels attached to editors, retain keyboard navigation and focus indication, and expose actions as text rather than color alone.
+The GUI owns one `Library` on the UI thread. Scan and PDF-replacement workers open their own connection from the config and report bounded messages over channels. SciXplorer metadata workers receive only a cloned API client and query/bibcode. Replacement uses its own token-free HTTPS agent, a global timeout, bounded redirects/body size, and a confirmed plan that is checked again immediately before mutation. Cancellation is an atomic flag checked between scan files. Keep labels attached to editors, retain keyboard navigation and focus indication, and expose actions as text rather than color alone.
 
 Windows builds include WGPU and Glow. Startup prefers WGPU and retries once with Glow. Linux release builds use X11/Glow to maintain the CentOS baseline.
 
@@ -52,10 +52,10 @@ Unit tests cover config/path rules, migrations, metadata precedence, manual over
 
 Generate the deterministic fixture set with `cargo run -p litman-core --example generate_fixtures -- target/litman-fixtures`. `SCENARIOS.txt` describes the rename/removal steps for move and missing-file tests; the encrypted fixture password is recorded there.
 
-Every acceptance run hashes fixture PDFs before and after all operations; any difference is release-blocking.
+Every acceptance run hashes fixture PDFs before and after ordinary operations; any difference is release-blocking. Explicit replacement tests are the controlled exception: only the selected active path may change, every displaced hash must reappear under marked `LitMan-backups`, the installed hash must match the staged publisher fixture, and unrelated PDFs must remain unchanged.
 
 ## Security and contributions
 
 Treat PDF contents, metadata, BibTeX, and web responses as hostile. Keep parser limits, avoid shell interpolation, validate paths and bibcodes, parameterize SQL, bound web calls, and display errors as text. Never log or display the configured bearer token. The token is deliberately stored as plain text only in the portable TOML configuration, so documentation must warn users about config copies, backups, shell history, and source control. Report vulnerabilities privately to the maintainers listed by the distribution channel.
 
-Contributions use a focused branch, formatted code, tests, both translations, and documentation where behavior changes. Review migrations, filesystem boundaries, JSON compatibility, supported-platform dependencies, and PDF immutability before merge.
+Contributions use a focused branch, formatted code, tests, both translations, and documentation where behavior changes. Review migrations, filesystem boundaries, JSON compatibility, supported-platform dependencies, the ordinary PDF-read-only boundary, and the replacement confirmation/staging/rollback boundary before merge.

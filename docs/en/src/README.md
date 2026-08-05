@@ -11,4 +11,4 @@ These manuals are generated as searchable, offline HTML. The installer includes 
 - Contributors should read the [development manual](development.md).
 - Release engineers should use the [build and release manual](building.md).
 
-LitMan does not modify, move, or delete PDFs. All editable information lives in the SQLite database beside the configuration file.
+Ordinary LitMan operations do not modify, move, or delete PDFs. The one explicit exception is the separately warned and confirmed **Update PDF** action, which preserves displaced files in `LitMan-backups`. Editable information lives in the SQLite database beside the configuration file.

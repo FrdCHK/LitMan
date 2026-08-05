@@ -33,13 +33,16 @@ litman scixplorer search title|doi|bibcode QUERY [--limit N] [--format table|jso
 litman scixplorer import PAPER_ID BIBCODE
 litman scixplorer bibtex PAPER_ID
 litman scixplorer open PAPER_ID
+litman scixplorer update-pdf PAPER_ID [--file PDF] [--yes]
 litman backup DESTINATION
 litman manual
 ```
 
 Repeated `--author` and `--keyword` values preserve order. `--clear title`, for example, creates an explicit blank manual value. Use the GUI's **Reset to PDF** action to remove an override and return to embedded metadata. Use `--interactive` to fill fields in a terminal.
 
-SciXplorer commands are optional. `token set` saves the personal ADS Developer API token as plain text in the selected library's TOML configuration; shell command history may also retain a token entered on the command line. `token status` never prints the token. `search` queries ADS by one selected field, with a default limit of 20 and a maximum of 100. `import` downloads BibTeX for a bibcode, stores it, and fills the selected paper's metadata. `bibtex` writes the stored entry unchanged to standard output, so it can be redirected to a `.bib` file. `open` opens the stored SciXplorer abstract URL in the system browser. Search and import require a configured token; stored BibTeX output and links do not.
+SciXplorer commands are optional. `token set` saves the personal ADS Developer API token as plain text in the selected library's TOML configuration; shell command history may also retain a token entered on the command line. `token status` never prints the token. `search` queries ADS by one selected field, with a default limit of 20 and a maximum of 100. `import` downloads BibTeX for a bibcode, stores it, and fills the selected paper's metadata. `bibtex` writes the stored entry unchanged to standard output, so it can be redirected to a `.bib` file. `open` opens the stored SciXplorer abstract URL in the system browser. Search and import require a configured token; stored BibTeX output, links, and PDF replacement do not.
+
+`update-pdf` prints every selected-source, backup, active-destination, and gateway path before doing anything. In a terminal it accepts only `y`; scripts and other noninteractive use must pass `--yes`. Without `--file`, it downloads through the unauthenticated SciXplorer publisher gateway. If the publisher returns a login/HTML page, an interactive command opens the browser and asks for the downloaded PDF path; noninteractive execution prints the gateway and recommends `--file PDF`. A `--file` source is copied and validated and remains untouched. The active name is always `BIBCODE.pdf`; displaced files use `LitMan-backups/BIBCODE_bk.pdf`, then `_bk_2`, and so on. Another database record owning the active name causes complete refusal.
 
 Examples:
 
@@ -54,6 +57,7 @@ litman --config D:/library/library.toml scixplorer token set PERSONAL_TOKEN
 litman --config D:/library/library.toml scixplorer search doi "10.1111/j.1365-2966.2008.13087.x"
 litman --config D:/library/library.toml scixplorer import 1b3a 2008MNRAS.386..619C
 litman --config D:/library/library.toml scixplorer bibtex 1b3a > references.bib
+litman --config D:/library/library.toml scixplorer update-pdf 1b3a --file D:/Downloads/published.pdf --yes
 ```
 
 Exit status is zero on success, 2 for command-line syntax errors, 3 when an ID is missing or ambiguous, and 4 for other library or I/O failures.

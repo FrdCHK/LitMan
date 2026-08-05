@@ -146,7 +146,15 @@ pub fn scixplorer_url(bibcode: &str) -> Result<String> {
     ))
 }
 
-fn validate_bibcode(bibcode: &str) -> Result<()> {
+pub fn publisher_pdf_url(bibcode: &str) -> Result<String> {
+    validate_bibcode(bibcode)?;
+    Ok(format!(
+        "https://scixplorer.org/link_gateway/{}/PUB_PDF",
+        bibcode.trim()
+    ))
+}
+
+pub(crate) fn validate_bibcode(bibcode: &str) -> Result<()> {
     let bibcode = bibcode.trim();
     if bibcode.is_empty()
         || bibcode.len() > 128

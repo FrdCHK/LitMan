@@ -1,12 +1,13 @@
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litman_core::{
     Config, FileStatus, Language, Library, ListFilter, LitmanError, Locale, Paper, PaperUpdate,
-    ScanEvent, ScanOptions, ScixplorerRecord, ScixplorerSearchField, default_config_path,
+    PdfReplacementPlan, PdfReplacementResult, ScanEvent, ScanOptions, ScixplorerRecord,
+    ScixplorerSearchField, default_config_path,
 };
 use serde::Serialize;
 
@@ -273,6 +274,19 @@ enum ScixplorerCommand {
     Open {
         #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
         paper_id: String,
+    },
+    #[command(about = "Replace a preprint with the published PDF / 用正式发表版替换预印本 PDF")]
+    UpdatePdf {
+        #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
+        paper_id: String,
+        #[arg(
+            long,
+            value_name = "PDF",
+            help = "Use an already downloaded publisher PDF / 使用已下载的正式版 PDF"
+        )]
+        file: Option<PathBuf>,
+        #[arg(long, help = "Confirm file moves and replacement / 确认移动和替换文件")]
+        yes: bool,
     },
 }
 
@@ -561,6 +575,11 @@ fn run(cli: Cli) -> litman_core::Result<()> {
                 }
             }
             ScixplorerCommand::Open { paper_id } => library.open_scixplorer(&paper_id)?,
+            ScixplorerCommand::UpdatePdf {
+                paper_id,
+                file,
+                yes,
+            } => update_pdf(&mut library, &paper_id, file.as_deref(), yes, locale)?,
         },
         Command::Open { paper_id } => library.open_pdf(&paper_id)?,
         Command::Backup { destination } => println!("{}", library.backup(destination)?.display()),
@@ -634,6 +653,169 @@ fn prompt(label: &str) -> litman_core::Result<Option<String>> {
     io::stdin().read_line(&mut input)?;
     let value = input.trim().to_owned();
     Ok((!value.is_empty()).then_some(value))
+}
+
+fn update_pdf(
+    library: &mut Library,
+    paper_id: &str,
+    file: Option<&Path>,
+    yes: bool,
+    locale: Locale,
+) -> litman_core::Result<()> {
+    let plan = library.pdf_replacement_plan(paper_id)?;
+    let file = file.map(Path::canonicalize).transpose()?;
+    print_pdf_replacement_warning(&plan, file.as_deref(), locale);
+    if !yes {
+        if !io::stdin().is_terminal() {
+            return Err(LitmanError::PdfReplacement(
+                "confirmation requires an interactive terminal or explicit --yes".into(),
+            ));
+        }
+        eprint!(
+            "{} ",
+            if locale.0 == Language::ZhCn {
+                "输入 y 以替换 PDF；其他输入将取消："
+            } else {
+                "Type y to replace the PDF; anything else cancels:"
+            }
+        );
+        io::stderr().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!(
+                "{}",
+                if locale.0 == Language::ZhCn {
+                    "已取消；未下载、移动或修改任何文件。"
+                } else {
+                    "Cancelled; no file was downloaded, moved, or changed."
+                }
+            );
+            return Ok(());
+        }
+    }
+
+    let result = if let Some(source) = file.as_deref() {
+        library.replace_pdf_from_file_with_plan(&plan, source)?
+    } else {
+        match library.replace_pdf_from_scixplorer_with_plan(&plan) {
+            Ok(result) => result,
+            Err(LitmanError::PublisherPdfBrowserRequired { gateway_url })
+                if io::stdin().is_terminal() =>
+            {
+                eprintln!(
+                    "{}\n{gateway_url}",
+                    if locale.0 == Language::ZhCn {
+                        "出版商要求浏览器验证。正在打开链接；下载后请输入 PDF 路径。"
+                    } else {
+                        "Publisher authentication is required. Opening the link; enter the PDF path after downloading it."
+                    }
+                );
+                open::that_detached(&gateway_url).map_err(|error| {
+                    LitmanError::PdfReplacement(format!(
+                        "could not open publisher link {gateway_url}: {error}"
+                    ))
+                })?;
+                let selected = prompt_downloaded_pdf(locale)?.ok_or_else(|| {
+                    LitmanError::PdfReplacement(
+                        "publisher download selection was cancelled; no library files changed"
+                            .into(),
+                    )
+                })?;
+                library.replace_pdf_from_file_with_plan(&plan, selected)?
+            }
+            Err(LitmanError::PublisherPdfBrowserRequired { gateway_url }) => {
+                return Err(LitmanError::PdfReplacement(format!(
+                    "publisher authentication is required; open {gateway_url} and rerun with --file PDF"
+                )));
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    print_pdf_replacement_result(&result, locale);
+    Ok(())
+}
+
+fn print_pdf_replacement_warning(
+    plan: &PdfReplacementPlan,
+    replacement_source: Option<&Path>,
+    locale: Locale,
+) {
+    eprintln!(
+        "{}",
+        if locale.0 == Language::ZhCn {
+            "警告：这项明确确认的操作会移动/重命名 PDF、更新数据库路径并替换当前文件。请先关闭 PDF 阅读器。备份不会由 LitMan 管理，必须手工恢复。"
+        } else {
+            "WARNING: this explicitly confirmed action moves/renames PDFs, changes the database path, and replaces the active file. Close PDF viewers first. Backups are unmanaged and require manual recovery."
+        }
+    );
+    if let Some(source) = replacement_source {
+        eprintln!(
+            "{}: {}",
+            if locale.0 == Language::ZhCn {
+                "正式版源文件"
+            } else {
+                "Published source file"
+            },
+            source.display()
+        );
+    }
+    for movement in &plan.backup_moves {
+        eprintln!(
+            "{} -> {}",
+            movement.source_path.display(),
+            movement.backup_path.display()
+        );
+    }
+    eprintln!(
+        "{} -> {}",
+        if locale.0 == Language::ZhCn {
+            "正式版 PDF"
+        } else {
+            "Published PDF"
+        },
+        plan.active_path.display()
+    );
+    eprintln!("Gateway: {}", plan.gateway_url);
+}
+
+fn prompt_downloaded_pdf(locale: Locale) -> litman_core::Result<Option<PathBuf>> {
+    eprint!(
+        "{} ",
+        if locale.0 == Language::ZhCn {
+            "已下载 PDF 的路径（留空取消）："
+        } else {
+            "Downloaded PDF path (blank cancels):"
+        }
+    );
+    io::stderr().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let value = input.trim();
+    Ok((!value.is_empty()).then(|| PathBuf::from(value)))
+}
+
+fn print_pdf_replacement_result(result: &PdfReplacementResult, locale: Locale) {
+    println!(
+        "{}: {}",
+        if locale.0 == Language::ZhCn {
+            "当前 PDF"
+        } else {
+            "Active PDF"
+        },
+        result.active_path.display()
+    );
+    for path in &result.backup_paths {
+        println!(
+            "{}: {}",
+            if locale.0 == Language::ZhCn {
+                "备份 PDF"
+            } else {
+                "Backup PDF"
+            },
+            path.display()
+        );
+    }
 }
 
 fn split_values(value: &str) -> Vec<String> {

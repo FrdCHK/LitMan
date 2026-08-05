@@ -24,4 +24,22 @@ grep -q '中文文献管理' "$work_dir/search.json"
   sha256sum ./*.pdf | sort
 ) > "$work_dir/after.sha256"
 cmp "$work_dir/before.sha256" "$work_dir/after.sha256"
-echo "PDF immutability smoke test passed"
+
+cp "$work_dir/pdfs/xmp-prism.pdf" "$work_dir/publisher.pdf"
+selected_hash="$(sha256sum "$work_dir/pdfs/info-only.pdf" | cut -d ' ' -f 1)"
+publisher_hash="$(sha256sum "$work_dir/publisher.pdf" | cut -d ' ' -f 1)"
+cargo run -p litman-core --example replacement_smoke -- \
+  "$work_dir/library.toml" info-only.pdf "$work_dir/publisher.pdf"
+
+backup_pdf="$work_dir/pdfs/LitMan-backups/2008MNRAS.386..619C_bk.pdf"
+active_pdf="$work_dir/pdfs/2008MNRAS.386..619C.pdf"
+test "$(sha256sum "$backup_pdf" | cut -d ' ' -f 1)" = "$selected_hash"
+test "$(sha256sum "$active_pdf" | cut -d ' ' -f 1)" = "$publisher_hash"
+test "$(sha256sum "$work_dir/publisher.pdf" | cut -d ' ' -f 1)" = "$publisher_hash"
+grep -v '  ./info-only.pdf$' "$work_dir/before.sha256" > "$work_dir/unrelated.sha256"
+(
+  cd "$work_dir/pdfs"
+  sha256sum -c "$work_dir/unrelated.sha256"
+)
+
+echo "Ordinary PDF immutability and explicit replacement safety smoke tests passed"

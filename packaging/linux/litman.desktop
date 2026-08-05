@@ -2,8 +2,8 @@
 Type=Application
 Name=LitMan
 Name[zh_CN]=LitMan 文献管理
-Comment=Local-first literature manager
-Comment[zh_CN]=本地优先的文献管理工具
+Comment=Local-first literature manager with safe confirmed PDF replacement
+Comment[zh_CN]=支持安全确认 PDF 替换的本地优先文献管理工具
 Exec=litman-gui
 Icon=litman
 Terminal=false

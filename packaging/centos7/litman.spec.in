@@ -14,7 +14,8 @@ Requires:       libX11, libXcursor, libXi, libXrandr, mesa-libGL, libxkbcommon, 
 
 %description
 LitMan scans existing PDF directories, stores editable metadata in a portable
-SQLite database, and provides native GUI and CLI interfaces. PDFs are read-only.
+SQLite database, and provides native GUI and CLI interfaces. Ordinary actions
+are PDF-read-only; an explicit confirmed action can preserve and replace a PDF.
 
 %prep
 %setup -q

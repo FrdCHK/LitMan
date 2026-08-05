@@ -4,7 +4,7 @@
            Manufacturer="Jingdong Zhang"
            UpgradeCode="5AC3AE36-C52E-4A8F-BDA0-C3EAE9F8E153">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
-             Platform="x64" Description="Local-first literature manager" />
+             Platform="x64" Description="Local-first literature manager with safe confirmed PDF replacement" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of LitMan is already installed." />

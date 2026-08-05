@@ -28,6 +28,14 @@ pub enum LitmanError {
     Scixplorer(String),
     #[error("BibTeX is not available for paper: {0}")]
     BibtexNotFound(String),
+    #[error("PDF replacement: {0}")]
+    PdfReplacement(String),
+    #[error("PDF replacement destination {path} belongs to another LitMan record ({paper_id})")]
+    PdfTargetOwnedByAnotherRecord { path: PathBuf, paper_id: String },
+    #[error(
+        "publisher authentication is required; use a browser or select a downloaded PDF: {gateway_url}"
+    )]
+    PublisherPdfBrowserRequired { gateway_url: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -60,6 +68,15 @@ impl LitmanError {
             Self::MissingScixplorerToken => "尚未配置 SciXplorer API 令牌".into(),
             Self::Scixplorer(detail) => format!("SciXplorer：{detail}"),
             Self::BibtexNotFound(id) => format!("文献没有可用的 BibTeX：{id}"),
+            Self::PdfReplacement(detail) => format!("PDF 替换：{detail}"),
+            Self::PdfTargetOwnedByAnotherRecord { path, paper_id } => format!(
+                "PDF 替换目标 {} 属于另一条 LitMan 记录（{}）",
+                path.display(),
+                paper_id
+            ),
+            Self::PublisherPdfBrowserRequired { gateway_url } => {
+                format!("出版商要求在浏览器中验证；请打开链接或选择已下载的 PDF：{gateway_url}")
+            }
             Self::Io(error) => format!("输入/输出错误：{error}"),
             Self::Database(error) => format!("数据库错误：{error}"),
             Self::TomlDecode(error) => format!("TOML 读取错误：{error}"),

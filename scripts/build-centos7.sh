@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-2.0.0}"
+version="${1:-2.1.0}"
 workspace="${LITMAN_WORKSPACE:-/workspace}"
 output="${LITMAN_OUTPUT:-/out}"
 build_root="$(mktemp -d /tmp/litman-rpm.XXXXXX)"

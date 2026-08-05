@@ -59,6 +59,14 @@ Select a paper and click **SciXplorer** in the metadata sidebar. Search by title
 
 When BibTeX is stored, **BibTeX** copies it to the system clipboard and displays a confirmation. **Open SciXplorer** opens `https://scixplorer.org/abs/BIBCODE/abstract` in the default web browser. Both buttons remain available without an API token because they use data already stored locally.
 
+### Replace a preprint with the publisher PDF
+
+For one present paper with a stored bibcode, **Update PDF** remains available even after the API token is removed. It uses `https://scixplorer.org/link_gateway/BIBCODE/PUB_PDF`; the ADS bearer token is never attached to that request or publisher redirects. The centered warning lists the selected PDF and backup, any separate untracked `BIBCODE.pdf` and its additional backup, and the final `BIBCODE.pdf`. Close PDF viewers, read the warning, tick the acknowledgment, then click the red **Replace PDF** button. Cancel starts no download and makes no filesystem or database change.
+
+LitMan downloads to a same-filesystem temporary file, enforces HTTPS, redirect/time and 256 MiB limits, checks the `%PDF-` header, parses the PDF, and hashes it before moving anything. The active file is always exactly `BIBCODE.pdf`, never a numbered variant. If that name is an untracked file, it is preserved too; if another LitMan record owns it, replacement is refused without changes. A publisher login/HTML response keeps the dialog open and offers **Open publisher link**, **Select downloaded PDF**, and **Cancel**. A selected external download is copied and validated; its source remains untouched.
+
+Displaced files go to the library root's `LitMan-backups`: first `BIBCODE_bk.pdf`, then `BIBCODE_bk_2.pdf`, and so on. LitMan marks directories it creates or adopts while empty and excludes only a marked backup directory from scans. A nonempty unmarked directory with that reserved name blocks replacement and remains scannable. Backups are unmanaged and must be recovered manually. A pending manifest lets startup, scans, and later replacements safely roll back a pre-commit interruption or finish cleanup after a committed database update; unexpected hashes are preserved and reported rather than guessed.
+
 ## Find and organize papers
 
 The search box matches literal text in metadata, authors, keywords, notes, filename/path, and group names. Text is Unicode NFKC-normalized and case-folded. Chinese searches work as substring searches without requiring word segmentation.
@@ -73,11 +81,11 @@ Status filters show present, missing, or error records. Importance and group fil
 
 ## Open and remove
 
-**Open** asks the operating system to open the PDF in its default viewer. **Remove database record** only removes LitMan's record after confirmation. LitMan v1 has no command that edits, moves, or deletes a PDF.
+**Open** asks the operating system to open the PDF in its default viewer. **Remove database record** only removes LitMan's record after confirmation. All ordinary actions keep PDFs read-only; only the explicit confirmed **Update PDF** workflow moves and replaces them as described above.
 
 ## Backup, copy, and restore
 
-Use **Backup** or `litman backup DESTINATION` while LitMan is running. This uses SQLite's online backup API and writes a consistent config/database pair. For a manual copy, close all LitMan processes first, then copy the TOML and SQLite files together.
+Use **Backup** or `litman backup DESTINATION` while LitMan is running. This uses SQLite's online backup API and writes a consistent config/database pair. It does not include the PDF tree or `LitMan-backups`; protect both with an independent file-backup policy. For a manual copy, close all LitMan processes first, then copy the TOML and SQLite files together.
 
 On another computer, copy or mount the PDF directory, open the copied TOML, and use **Relocate root** (or `litman root set DIR`). Relative PDF paths use `/`, so only the root changes. Do not separately combine a config from one backup with a database from another.
 
@@ -85,8 +93,8 @@ Restore by closing LitMan and replacing both files with a matching backup pair. 
 
 ## Upgrades and errors
 
-Opening a newer LitMan database with an older program may be refused. Before upgrading, create a backup. Migrations run transactionally and never change PDFs.
+Opening a newer LitMan database with an older program may be refused. Before upgrading, create a backup. Database migrations run transactionally and do not change PDFs.
 
 If a file is missing, confirm the root and scan again. For a parse error, the diagnostic remains visible; enter metadata manually if needed. If the database is busy, close other LitMan processes and retry. If a GUI renderer fails on Windows, LitMan retries with OpenGL automatically.
 
-LitMan performs no telemetry. All ordinary library, PDF, search, organization, and backup work stays local and needs no network connection. Only an explicit optional SciXplorer search or import sends the configured token and query/bibcode to the ADS API; opening a SciXplorer link contacts that website through the system browser.
+LitMan performs no telemetry. All ordinary library, PDF, search, organization, and backup work stays local. SciXplorer search/import sends the configured token and query/bibcode to the ADS API. Explicit publisher replacement contacts SciXplorer and the resolved publisher without forwarding the ADS token; browser fallback also contacts those sites through the system browser.

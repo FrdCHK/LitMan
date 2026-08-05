@@ -4,6 +4,7 @@ mod error;
 mod i18n;
 mod metadata;
 mod model;
+mod pdf_replace;
 mod scan;
 mod scixplorer;
 
@@ -16,4 +17,5 @@ pub use model::{
     EmbeddedMetadata, FileStatus, Group, Paper, PaperUpdate, ScanEvent, ScanOptions, ScanReport,
     ScixplorerRecord, ScixplorerSearchField,
 };
-pub use scixplorer::{ScixplorerClient, scixplorer_url};
+pub use pdf_replace::{PdfBackupMove, PdfReplacementPlan, PdfReplacementResult};
+pub use scixplorer::{ScixplorerClient, publisher_pdf_url, scixplorer_url};

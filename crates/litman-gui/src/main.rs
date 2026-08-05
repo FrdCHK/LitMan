@@ -14,8 +14,8 @@ use egui::{FontData, FontDefinitions, FontFamily};
 use egui_extras::{Column, TableBuilder};
 use litman_core::{
     Config, FileStatus, Group, Language, Library, ListFilter, LitmanError, Locale, Paper,
-    PaperUpdate, ScanEvent, ScanOptions, ScixplorerClient, ScixplorerRecord, ScixplorerSearchField,
-    default_config_path,
+    PaperUpdate, PdfReplacementPlan, PdfReplacementResult, ScanEvent, ScanOptions,
+    ScixplorerClient, ScixplorerRecord, ScixplorerSearchField, default_config_path,
 };
 
 const USER_MANUAL_EN: &str = include_str!("../../../docs/en/src/user.md");
@@ -161,6 +161,18 @@ enum ScixplorerWorkerMessage {
     },
 }
 
+enum PdfReplacementWorkerMessage {
+    Done(litman_core::Result<PdfReplacementResult>),
+}
+
+struct PdfReplacementWindowState {
+    plan: PdfReplacementPlan,
+    acknowledged: bool,
+    busy: bool,
+    browser_fallback: bool,
+    error: String,
+}
+
 struct ScixplorerWindowState {
     paper_id: String,
     field: ScixplorerSearchField,
@@ -214,6 +226,8 @@ struct LitManApp {
     rename_group: Option<RenameGroupState>,
     scixplorer: Option<ScixplorerWindowState>,
     scixplorer_receiver: Option<Receiver<ScixplorerWorkerMessage>>,
+    pdf_replacement: Option<PdfReplacementWindowState>,
+    pdf_replacement_receiver: Option<Receiver<PdfReplacementWorkerMessage>>,
     show_scixplorer_settings: bool,
     scixplorer_token_input: String,
     show_about: bool,
@@ -249,6 +263,8 @@ impl LitManApp {
             rename_group: None,
             scixplorer: None,
             scixplorer_receiver: None,
+            pdf_replacement: None,
+            pdf_replacement_receiver: None,
             show_scixplorer_settings: false,
             scixplorer_token_input: String::new(),
             show_about: false,
@@ -271,6 +287,8 @@ impl LitManApp {
                 self.rename_group = None;
                 self.scixplorer = None;
                 self.scixplorer_receiver = None;
+                self.pdf_replacement = None;
+                self.pdf_replacement_receiver = None;
                 self.show_scixplorer_settings = false;
                 self.scixplorer_token_input.clear();
                 self.auto_scan_pending = true;
@@ -361,7 +379,10 @@ impl LitManApp {
     }
 
     fn begin_scan(&mut self, refresh_metadata: bool) {
-        if self.scan_receiver.is_some() {
+        if self.scan_receiver.is_some()
+            || self.pdf_replacement_receiver.is_some()
+            || self.pdf_replacement.is_some()
+        {
             return;
         }
         let Some(config_path) = self.config_path.clone() else {
@@ -440,8 +461,13 @@ impl LitManApp {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(self.locale.text("app.title"));
                 ui.separator();
+                let replacement_idle =
+                    self.pdf_replacement_receiver.is_none() && self.pdf_replacement.is_none();
                 if ui
-                    .button(dual(self.locale, "Open library", "打开文献库"))
+                    .add_enabled(
+                        replacement_idle,
+                        egui::Button::new(dual(self.locale, "Open library", "打开文献库")),
+                    )
                     .clicked()
                     && let Some(path) = rfd::FileDialog::new()
                         .add_filter("LitMan TOML", &["toml"])
@@ -450,23 +476,38 @@ impl LitManApp {
                     self.open_library(path);
                 }
                 if ui
-                    .button(dual(self.locale, "New library", "新建文献库"))
+                    .add_enabled(
+                        replacement_idle,
+                        egui::Button::new(dual(self.locale, "New library", "新建文献库")),
+                    )
                     .clicked()
                 {
                     self.create_library();
                 }
                 if self.library.is_some() {
-                    if ui.button(self.locale.text("action.scan")).clicked() {
+                    if ui
+                        .add_enabled(
+                            replacement_idle,
+                            egui::Button::new(self.locale.text("action.scan")),
+                        )
+                        .clicked()
+                    {
                         self.begin_scan(false);
                     }
                     if ui
-                        .button(dual(self.locale, "Refresh metadata", "刷新元数据"))
+                        .add_enabled(
+                            replacement_idle,
+                            egui::Button::new(dual(self.locale, "Refresh metadata", "刷新元数据")),
+                        )
                         .clicked()
                     {
                         self.begin_scan(true);
                     }
                     if ui
-                        .button(dual(self.locale, "Relocate root", "更改根目录"))
+                        .add_enabled(
+                            replacement_idle,
+                            egui::Button::new(dual(self.locale, "Relocate root", "更改根目录")),
+                        )
                         .clicked()
                     {
                         self.relocate_root();
@@ -1122,8 +1163,12 @@ impl LitManApp {
                         .cloned();
                     let token_configured = scixplorer_token_configured(self.library.as_ref());
                     ui.horizontal_wrapped(|ui| {
-                        let search =
-                            ui.add_enabled(token_configured, egui::Button::new("SciXplorer"));
+                        let search = ui.add_enabled(
+                            token_configured
+                                && self.pdf_replacement_receiver.is_none()
+                                && self.pdf_replacement.is_none(),
+                            egui::Button::new("SciXplorer"),
+                        );
                         if search.clicked() {
                             self.open_scixplorer_search();
                         }
@@ -1179,6 +1224,40 @@ impl LitManApp {
                             && let Err(error) = library.open_scixplorer(&self.editor.paper_id)
                         {
                             self.message = error.localized(self.locale.0);
+                        }
+
+                        let can_replace = pdf_update_enabled(
+                            self.selected.len(),
+                            selected_paper
+                                .as_ref()
+                                .is_some_and(|paper| paper.file_status == FileStatus::Present),
+                            selected_paper.as_ref().is_some_and(|paper| {
+                                paper
+                                    .bibcode
+                                    .as_deref()
+                                    .is_some_and(|value| !value.is_empty())
+                            }),
+                            self.scan_receiver.is_some(),
+                            self.pdf_replacement_receiver.is_some()
+                                || self.pdf_replacement.is_some(),
+                        );
+                        if ui
+                            .add_enabled(
+                                can_replace,
+                                egui::Button::new(dual(
+                                    self.locale,
+                                    "Update PDF",
+                                    "更新 PDF",
+                                )),
+                            )
+                            .on_disabled_hover_text(dual(
+                                self.locale,
+                                "Select one present paper with an imported ADS bibcode; scanning and replacement must be idle.",
+                                "请选择一篇存在且已导入 ADS bibcode 的文献；扫描和替换任务必须处于空闲状态。",
+                            ))
+                            .clicked()
+                        {
+                            self.open_pdf_replacement_warning();
                         }
                     });
                     ui.horizontal_wrapped(|ui| {
@@ -1326,11 +1405,15 @@ impl LitManApp {
                     ui.separator();
                     if !self.confirm_delete {
                         if ui
-                            .button(dual(
-                                self.locale,
-                                "Remove database record",
-                                "移除数据库记录",
-                            ))
+                            .add_enabled(
+                                self.pdf_replacement.is_none()
+                                    && self.pdf_replacement_receiver.is_none(),
+                                egui::Button::new(dual(
+                                    self.locale,
+                                    "Remove database record",
+                                    "移除数据库记录",
+                                )),
+                            )
                             .clicked()
                         {
                             self.confirm_delete = true;
@@ -1555,6 +1638,240 @@ impl LitManApp {
                     );
                 }
             }
+        }
+    }
+
+    fn open_pdf_replacement_warning(&mut self) {
+        if self.selected.len() != 1
+            || self.scan_receiver.is_some()
+            || self.pdf_replacement_receiver.is_some()
+            || self.pdf_replacement.is_some()
+        {
+            return;
+        }
+        let Some(library) = self.library.as_ref() else {
+            return;
+        };
+        match library.pdf_replacement_plan(&self.editor.paper_id) {
+            Ok(plan) => {
+                self.pdf_replacement = Some(PdfReplacementWindowState {
+                    plan,
+                    acknowledged: false,
+                    busy: false,
+                    browser_fallback: false,
+                    error: String::new(),
+                });
+            }
+            Err(error) => self.message = error.localized(self.locale.0),
+        }
+    }
+
+    fn start_pdf_replacement_worker(&mut self, source_path: Option<PathBuf>) {
+        let Some(config_path) = self.config_path.clone() else {
+            return;
+        };
+        let Some(state) = self.pdf_replacement.as_mut() else {
+            return;
+        };
+        state.busy = true;
+        state.browser_fallback = false;
+        state.error.clear();
+        let plan = state.plan.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.pdf_replacement_receiver = Some(receiver);
+        thread::spawn(move || {
+            let result = Library::open(config_path).and_then(|mut library| match source_path {
+                Some(path) => library.replace_pdf_from_file_with_plan(&plan, path),
+                None => library.replace_pdf_from_scixplorer_with_plan(&plan),
+            });
+            let _ = sender.send(PdfReplacementWorkerMessage::Done(result));
+        });
+    }
+
+    fn poll_pdf_replacement(&mut self) {
+        let Some(receiver) = self.pdf_replacement_receiver.as_ref() else {
+            return;
+        };
+        let message = match receiver.try_recv() {
+            Ok(message) => message,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pdf_replacement_receiver = None;
+                if let Some(state) = self.pdf_replacement.as_mut() {
+                    state.busy = false;
+                    state.error = dual(
+                        self.locale,
+                        "PDF replacement worker stopped unexpectedly.",
+                        "PDF 替换后台任务意外停止。",
+                    )
+                    .into();
+                }
+                return;
+            }
+        };
+        self.pdf_replacement_receiver = None;
+        match message {
+            PdfReplacementWorkerMessage::Done(Ok(result)) => {
+                let backups = result
+                    .backup_paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                self.message = if self.locale.0 == Language::ZhCn {
+                    format!(
+                        "PDF 已替换。当前文件：{}；备份：{}",
+                        result.active_path.display(),
+                        backups
+                    )
+                } else {
+                    format!(
+                        "PDF replaced. Active: {}; backups: {}",
+                        result.active_path.display(),
+                        backups
+                    )
+                };
+                self.pdf_replacement = None;
+                self.reload();
+            }
+            PdfReplacementWorkerMessage::Done(Err(LitmanError::PublisherPdfBrowserRequired {
+                ..
+            })) => {
+                if let Some(state) = self.pdf_replacement.as_mut() {
+                    state.busy = false;
+                    state.browser_fallback = true;
+                    state.error = dual(
+                        self.locale,
+                        "The publisher returned a login/HTML page. Open the publisher link, download the PDF, then select it here.",
+                        "出版商返回了登录/HTML 页面。请打开出版商链接，下载 PDF 后在此选择。",
+                    )
+                    .into();
+                }
+            }
+            PdfReplacementWorkerMessage::Done(Err(error)) => {
+                if let Some(state) = self.pdf_replacement.as_mut() {
+                    state.busy = false;
+                    state.error = error.localized(self.locale.0);
+                }
+            }
+        }
+    }
+
+    fn pdf_replacement_window(&mut self, root: &mut egui::Ui) {
+        let Some(mut state) = self.pdf_replacement.take() else {
+            return;
+        };
+        let locale = self.locale;
+        let mut open = true;
+        let mut replace = false;
+        let mut open_publisher = false;
+        let mut select_download = false;
+        let mut cancel = false;
+        egui::Window::new(dual(locale, "Replace PDF", "替换 PDF"))
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .collapsible(false)
+            .resizable(true)
+            .default_width(650.0)
+            .show(root.ctx(), |ui| {
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    dual(
+                        locale,
+                        "Warning: this action replaces files on disk.",
+                        "警告：此操作会替换磁盘上的文件。",
+                    ),
+                );
+                ui.label(pdf_replacement_warning(locale));
+                ui.separator();
+                for (index, movement) in state.plan.backup_moves.iter().enumerate() {
+                    ui.label(if index == 0 {
+                        dual(locale, "Current selected PDF → backup", "当前选中 PDF → 备份")
+                    } else {
+                        dual(locale, "Existing untracked target → additional backup", "现有未跟踪目标 → 额外备份")
+                    });
+                    ui.monospace(format!(
+                        "{}\n→ {}",
+                        movement.source_path.display(),
+                        movement.backup_path.display()
+                    ));
+                }
+                ui.label(dual(locale, "Final published PDF", "最终正式版 PDF"));
+                ui.monospace(state.plan.active_path.display().to_string());
+                ui.separator();
+                ui.checkbox(
+                    &mut state.acknowledged,
+                    dual(
+                        locale,
+                        "I understand that files and the database path will change and recovery is manual.",
+                        "我了解文件和数据库路径将改变，且恢复需要手工完成。",
+                    ),
+                );
+                if state.busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(dual(
+                            locale,
+                            "Downloading, validating, and replacing PDF…",
+                            "正在下载、验证并替换 PDF…",
+                        ));
+                    });
+                }
+                if !state.error.is_empty() {
+                    ui.colored_label(egui::Color32::RED, &state.error);
+                }
+                if state.browser_fallback {
+                    ui.horizontal_wrapped(|ui| {
+                        open_publisher = ui
+                            .button(dual(locale, "Open publisher link", "打开出版商链接"))
+                            .clicked();
+                        select_download = ui
+                            .button(dual(locale, "Select downloaded PDF", "选择已下载的 PDF"))
+                            .clicked();
+                        cancel = ui.button(dual(locale, "Cancel", "取消")).clicked();
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        replace = ui
+                            .add_enabled(
+                                pdf_replacement_confirmation_enabled(
+                                    state.acknowledged,
+                                    state.busy,
+                                ),
+                                egui::Button::new(
+                                    egui::RichText::new(dual(locale, "Replace PDF", "替换 PDF"))
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::DARK_RED),
+                            )
+                            .clicked();
+                        cancel = ui
+                            .add_enabled(
+                                !state.busy,
+                                egui::Button::new(dual(locale, "Cancel", "取消")),
+                            )
+                            .clicked();
+                    });
+                }
+            });
+
+        if open_publisher && let Err(error) = open::that_detached(&state.plan.gateway_url) {
+            state.error = error.to_string();
+        }
+        if select_download
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("PDF", &["pdf"])
+                .pick_file()
+        {
+            self.pdf_replacement = Some(state);
+            self.start_pdf_replacement_worker(Some(path));
+            return;
+        }
+        if replace {
+            self.pdf_replacement = Some(state);
+            self.start_pdf_replacement_worker(None);
+        } else if open && !cancel {
+            self.pdf_replacement = Some(state);
         }
     }
 
@@ -1976,8 +2293,8 @@ impl LitManApp {
                 ));
                 ui.label(dual(
                     locale,
-                    "Local-first literature management without modifying PDFs.",
-                    "本地优先的文献管理，不修改 PDF。",
+                    "Local-first literature management. Ordinary actions keep PDFs read-only; explicit Update PDF preserves and replaces one selected file after confirmation.",
+                    "本地优先的文献管理。普通操作保持 PDF 只读；明确确认“更新 PDF”后会保留并替换一个选中文件。",
                 ));
                 ui.collapsing(
                     dual(locale, "Full GPLv3 license", "GPLv3 完整许可证"),
@@ -1998,6 +2315,7 @@ impl eframe::App for LitManApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll_scan();
         self.poll_scixplorer();
+        self.poll_pdf_replacement();
         if self.auto_scan_pending {
             self.auto_scan_pending = false;
             self.begin_scan(false);
@@ -2018,9 +2336,13 @@ impl eframe::App for LitManApp {
         }
         self.group_rename_window(root);
         self.scixplorer_window(root);
+        self.pdf_replacement_window(root);
         self.scixplorer_settings_window(root);
         self.about_window(root);
-        if self.scan_receiver.is_some() || self.scixplorer_receiver.is_some() {
+        if self.scan_receiver.is_some()
+            || self.scixplorer_receiver.is_some()
+            || self.pdf_replacement_receiver.is_some()
+        {
             root.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -2109,6 +2431,28 @@ fn dual(locale: Locale, english: &'static str, chinese: &'static str) -> &'stati
     } else {
         english
     }
+}
+
+fn pdf_update_enabled(
+    selected_count: usize,
+    paper_is_present: bool,
+    has_bibcode: bool,
+    scan_busy: bool,
+    replacement_busy: bool,
+) -> bool {
+    selected_count == 1 && paper_is_present && has_bibcode && !scan_busy && !replacement_busy
+}
+
+fn pdf_replacement_confirmation_enabled(acknowledged: bool, busy: bool) -> bool {
+    acknowledged && !busy
+}
+
+fn pdf_replacement_warning(locale: Locale) -> &'static str {
+    dual(
+        locale,
+        "Close PDF viewers first. LitMan will move/rename files, change the database path, and install the publisher PDF. Backups are unmanaged and require manual recovery.",
+        "请先关闭 PDF 阅读器。LitMan 将移动/重命名文件、修改数据库路径并安装正式版 PDF。备份不受 LitMan 管理，需要手工恢复。",
+    )
 }
 
 fn metadata_field_label(locale: Locale, field: &str) -> &str {
@@ -2354,6 +2698,29 @@ mod tests {
             .set_scixplorer_api_token(None)
             .unwrap();
         assert!(!scixplorer_token_configured(app.library.as_ref()));
+    }
+
+    #[test]
+    fn pdf_update_enablement_and_acknowledgment_are_strict() {
+        assert!(pdf_update_enabled(1, true, true, false, false));
+        assert!(!pdf_update_enabled(2, true, true, false, false));
+        assert!(!pdf_update_enabled(1, false, true, false, false));
+        assert!(!pdf_update_enabled(1, true, false, false, false));
+        assert!(!pdf_update_enabled(1, true, true, true, false));
+        assert!(!pdf_update_enabled(1, true, true, false, true));
+        assert!(!pdf_replacement_confirmation_enabled(false, false));
+        assert!(pdf_replacement_confirmation_enabled(true, false));
+        assert!(!pdf_replacement_confirmation_enabled(true, true));
+    }
+
+    #[test]
+    fn pdf_replacement_warning_is_localized_and_explicit() {
+        let english = pdf_replacement_warning(Locale::new(Language::En));
+        assert!(english.contains("move/rename files"));
+        assert!(english.contains("manual recovery"));
+        let chinese = pdf_replacement_warning(Locale::new(Language::ZhCn));
+        assert!(chinese.contains("移动/重命名"));
+        assert!(chinese.contains("手工恢复"));
     }
 
     #[test]

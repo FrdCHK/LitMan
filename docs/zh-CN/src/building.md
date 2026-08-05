@@ -20,10 +20,10 @@ cargo build --workspace --release --locked
 可用 `winget install --id WiXToolset.WiXToolset --exact --scope machine` 在系统范围安装 WiX。打包脚本会从 `PATH`、系统/用户 `WIX` 环境变量或 WiX 3.14 标准安装目录中自动查找工具，因此 `cargo clean` 不会再删除 WiX。
 
 ```powershell
-./scripts/package-windows.ps1 -Version 2.0.0
+./scripts/package-windows.ps1 -Version 2.1.0
 ```
 
-脚本会构建两个程序和两种手册，并生成 `dist/LitMan-2.0.0-x64.msi`、单文件 `dist/LitMan-2.0.0-portable-x64.exe`，以及包含 `LitMan.exe`、`litman-cli.exe`、许可证和离线手册的便携版 ZIP。MSI 包含 GUI、CLI、开始菜单快捷方式、本地手册、卸载信息，以及可选的 CLI PATH 组件。设置 `LITMAN_CERT_THUMBPRINT` 并传入 `-Sign` 可调用 `signtool`；时间戳地址由 `LITMAN_TIMESTAMP_URL` 控制。
+脚本会构建两个程序和两种手册，并生成 `dist/LitMan-2.1.0-x64.msi`、单文件 `dist/LitMan-2.1.0-portable-x64.exe`，以及包含 `LitMan.exe`、`litman-cli.exe`、许可证和离线手册的便携版 ZIP。MSI 包含 GUI、CLI、开始菜单快捷方式、本地手册、卸载信息，以及可选的 CLI PATH 组件。设置 `LITMAN_CERT_THUMBPRINT` 并传入 `-Sign` 可调用 `signtool`；时间戳地址由 `LITMAN_TIMESTAMP_URL` 控制。
 
 MSI ProductCode 根据版本号和源码内容确定生成。WiX 允许同版本重大升级，因此源码发生变化后的重构建可以直接覆盖已安装版本，无需手工卸载；完全相同的源码仍能复现同一 ProductCode。所有版本必须保持 UpgradeCode 不变。
 
@@ -39,7 +39,7 @@ WiX 默认执行 Windows Installer ICE 验证。`-SkipValidation` 只用于无�
 
 ```console
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
-./scripts/package-macos.sh 2.0.0
+./scripts/package-macos.sh 2.1.0
 ```
 
 脚本用 `lipo` 合并程序，创建 `LitMan.app`、DMG 和 PKG。PKG 安装应用以及 `/usr/local/bin/litman`。签名时设置 `LITMAN_APPLE_IDENTITY` 与 `LITMAN_INSTALLER_IDENTITY`；最终 DMG/PKG 使用 `xcrun notarytool` 和仓库外凭据公证，再用 `xcrun stapler` 附加票据。
@@ -51,8 +51,8 @@ rustup target add x86_64-apple-darwin aarch64-apple-darwin
 安装 `build-essential`、`pkg-config`、`libx11-dev`、`libxkbcommon-dev`、`libgl1-mesa-dev`、`libdbus-1-dev`、`dpkg-dev`、Rust 和 mdBook，然后运行：
 
 ```console
-./scripts/package-deb.sh 2.0.0
-sudo apt install ./dist/litman_2.0.0_amd64.deb
+./scripts/package-deb.sh 2.1.0
+sudo apt install ./dist/litman_2.1.0_amd64.deb
 ```
 
 DEB 包括两个程序、桌面入口、图标、许可证和手册。运行依赖明确列出 X11、OpenGL、D-Bus 和 `xdg-utils`。必须在最旧受支持 Ubuntu 和当前版本上测试。
@@ -83,7 +83,7 @@ CI 进行格式化、lint、测试、构建两种手册、检查内部链接、�
 3. 先生成未签名包；如需要，再在受控构建机签名/公证。
 4. 首先执行 Windows 10 验收，再执行 Windows 11、CentOS VM、Ubuntu 和两种 macOS 架构。
 5. 在所有平台间复制已关闭的配置/数据库文件对，只更改根目录。
-6. 比较整个矩阵执行前后每个 PDF 样例的哈希。
+6. 比较普通操作前后每个 PDF 样例的哈希；另行验证明确替换会把被替换哈希保存在带标记的 `LitMan-backups` 中、安装暂存的正式版哈希，并保持无关 PDF 不变。
 7. 测试备份/恢复以及从上一数据库和安装包升级。
 8. 发布校验和、源码包、两种用户手册、已知限制和支持矩阵。
 

@@ -11,4 +11,4 @@ LitMan 的作者是 Jingdong Zhang，并采用 GNU 通用公共许可证第 3 �
 - 贡献者请阅读[开发手册](development.md)。
 - 发布工程师请遵循[构建与发布手册](building.md)。
 
-LitMan 不会修改、移动或删除任何 PDF。所有可编辑信息都保存在配置文件旁的 SQLite 数据库中。
+LitMan 的普通操作不会修改、移动或删除 PDF。唯一例外是单独警告并确认的“更新 PDF”操作；被替换的文件会保存在 `LitMan-backups` 中。所有可编辑信息都保存在配置文件旁的 SQLite 数据库中。

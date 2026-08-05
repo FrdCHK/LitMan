@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 use crate::db::{Library, ScannedData};
 use crate::metadata::extract_pdf_metadata;
 use crate::model::{ScanEvent, ScanOptions, ScanReport};
+use crate::pdf_replace::is_managed_backup_directory;
 use crate::{LitmanError, Result};
 
 #[derive(Debug)]
@@ -31,6 +32,7 @@ impl Library {
     where
         F: FnMut(ScanEvent),
     {
+        self.recover_pdf_replacements()?;
         let root_path = self.root_path();
         let root = root_path
             .canonicalize()
@@ -41,7 +43,11 @@ impl Library {
 
         let mut report = ScanReport::default();
         let mut files = Vec::new();
-        for entry in WalkDir::new(&root).follow_links(false) {
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| !is_managed_backup_directory(&root, entry.path()))
+        {
             if cancellation.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                 report.cancelled = true;
                 emit(ScanEvent::Finished(report.clone()));
@@ -274,7 +280,7 @@ fn discovered_file(root: &Path, path: &Path) -> Result<DiscoveredFile> {
     })
 }
 
-fn hash_pdf(path: &Path) -> Result<String> {
+pub(crate) fn hash_pdf(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut prefix = [0_u8; 5];
     file.read_exact(&mut prefix)?;

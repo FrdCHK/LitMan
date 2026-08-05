@@ -69,11 +69,13 @@ impl Library {
         let connection = Connection::open(database_path)?;
         configure_connection(&connection)?;
         migrate(&connection)?;
-        Ok(Self {
+        let mut library = Self {
             config_path,
             config,
             connection,
-        })
+        };
+        library.recover_pdf_replacements()?;
+        Ok(library)
     }
 
     pub fn config(&self) -> &Config {
@@ -1003,7 +1005,9 @@ fn apply_update(paper: &mut Paper, update: PaperUpdate) {
 fn apply_embedded_to_unmodified(paper: &mut Paper) {
     macro_rules! copy {
         ($field:ident) => {
-            if !paper.manual_overrides.contains(stringify!($field)) {
+            if !paper.manual_overrides.contains(stringify!($field))
+                && !paper.bibtex_fields.contains(stringify!($field))
+            {
                 paper.$field = paper.embedded.$field.clone();
             }
         };
