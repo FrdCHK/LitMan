@@ -27,6 +27,7 @@ litman group add PATH PAPER_ID ...
 litman group remove PATH PAPER_ID ...
 litman root set DIR
 litman open PAPER_ID
+litman import SOURCE [--provider auto|scixplorer|arxiv] [--file PDF] [--format table|json]
 litman scixplorer token set TOKEN
 litman scixplorer token status|clear
 litman scixplorer search title|doi|bibcode QUERY [--limit N] [--format table|json]
@@ -38,7 +39,11 @@ litman backup DESTINATION
 litman manual
 ```
 
-Repeated `--author` and `--keyword` values preserve order. `--clear title`, for example, creates an explicit blank manual value. Use the GUI's **Reset to PDF** action to remove an override and return to embedded metadata. Use `--interactive` to fill fields in a terminal.
+Repeated `--author` and `--keyword` values preserve order. `--clear title`, for example, creates an explicit blank manual value. Use the GUI's **Reset to embedded PDF** action to remove an override and return to embedded metadata. Use `--interactive` to fill fields in a terminal.
+
+The top-level `import` command auto-detects a bare ADS bibcode, modern/legacy arXiv ID, ADS abstract URL, or arXiv abstract/PDF URL. ADS imports require the configured token; arXiv imports do not. `--provider` can enforce the expected provider. If an ADS publisher page requires browser authentication, an interactive terminal opens it and asks for the downloaded PDF; otherwise rerun with `--file PDF`. The selected file is copied and remains unchanged. Table output summarizes the source and paper; JSON is the stable `RemoteImportResult` object with `paper`, `provider`, `source_id`, `pdf_source`, and `relative_path`.
+
+Imports use fixed `BIBCODE.pdf` and `arXiv-ID.pdf` destinations and refuse existing IDs, paths, or hashes. No collision is overwritten or numbered. The PDF and metadata commit together, and a failed or cancelled import leaves neither one behind.
 
 SciXplorer commands are optional. `token set` saves the personal ADS Developer API token as plain text in the selected library's TOML configuration; shell command history may also retain a token entered on the command line. `token status` never prints the token. `search` queries ADS by one selected field, with a default limit of 20 and a maximum of 100. `import` downloads BibTeX for a bibcode, stores it, and fills the selected paper's metadata. `bibtex` writes the stored entry unchanged to standard output, so it can be redirected to a `.bib` file. `open` opens the stored SciXplorer abstract URL in the system browser. Search and import require a configured token; stored BibTeX output, links, and PDF replacement do not.
 
@@ -54,6 +59,8 @@ litman --config D:/library/library.toml group create "Thesis/Methods"
 litman --config D:/library/library.toml group add "Thesis/Methods" 1b3a 57c2
 litman --config D:/library/library.toml rate 1b3a 5
 litman --config D:/library/library.toml scixplorer token set PERSONAL_TOKEN
+litman --config D:/library/library.toml import https://arxiv.org/abs/0908.3637 --format json
+litman --config D:/library/library.toml import 2003ApJ...587..208R --provider scixplorer
 litman --config D:/library/library.toml scixplorer search doi "10.1111/j.1365-2966.2008.13087.x"
 litman --config D:/library/library.toml scixplorer import 1b3a 2008MNRAS.386..619C
 litman --config D:/library/library.toml scixplorer bibtex 1b3a > references.bib

@@ -1,8 +1,8 @@
 # LitMan
 
-LitMan is a local-first literature manager for existing PDF directories. It provides a native GUI and a scriptable CLI and stores bibliographic edits in a portable SQLite database. Ordinary operations never modify, move, or delete PDFs. An optional SciXplorer integration can search ADS, import BibTeX metadata, and replace a selected preprint with a validated publisher PDF while preserving displaced files.
+LitMan is a local-first literature manager for PDF directories. It provides a native GUI and scriptable CLI and stores bibliographic edits in a portable SQLite database. It can import a PDF plus metadata from ADS/SciXplorer or arXiv, and its independent **Newly added** filter tracks papers created during the current GUI session. Existing PDFs remain read-only except for the separately confirmed publisher-update workflow.
 
-The interface, CLI messages, and offline manuals support English and Simplified Chinese. Windows 10 22H2 x64 is the primary release target; Windows 11, Ubuntu 22.04+ are also supported. You can also build for your operating system.
+The interface, CLI messages, and offline manuals support English and Simplified Chinese. Windows 10 22H2 x64 is the primary release target; Windows 11, Ubuntu 22.04+, CentOS 7.9 x64, and macOS 12+ are also supported as documented.
 
 ## Quick start
 
@@ -28,8 +28,8 @@ Build and release prerequisites are documented in [the English build manual](doc
 
 ## Safety and privacy
 
-LitMan has no telemetry or database server. It requires no network for ordinary library work. Explicit SciXplorer search/import sends the configured token only to the ADS API. Explicit **Update PDF** contacts SciXplorer's unauthenticated publisher gateway and the resolved publisher, never forwards the ADS token, and may open a browser for publisher authentication. A configured token is stored as plain text in the library TOML and its config/database backups.
+LitMan has no telemetry or database server. It requires no network for ordinary library work. SciXplorer search/import sends the configured token only to the ADS API; arXiv import needs no token. Remote imports use HTTPS, fixed collision-refusing destinations, staged PDF validation, and an all-or-nothing database/file commit. Publisher requests and arXiv never receive the ADS token. A configured token is stored as plain text in the library TOML and its config/database backups.
 
-Apart from the separately confirmed **Update PDF** action, PDFs remain read-only. Replacement stages and validates the download, moves every displaced file into the marked top-level `LitMan-backups` directory, updates only the selected database record, and uses a recovery manifest. Config/database backups do not include the PDF tree or `LitMan-backups`; back these up independently. Removing a LitMan record still does not remove its PDF.
+Online import may create one new PDF; it never changes an existing PDF or a browser-selected source file. Apart from the separately confirmed **Update PDF** action, existing PDFs remain read-only. Config/database backups do not include the PDF tree or `LitMan-backups`; back these up independently. Removing a LitMan record still does not remove its PDF.
 
 LitMan is licensed under the GNU General Public License version 3; see `LICENSE`. The bundled Noto Sans CJK SC font has its own SIL Open Font License in `crates/litman-gui/assets/LICENSE-NOTO.txt`.

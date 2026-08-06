@@ -7,7 +7,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 rust-version = "1.97"
 license = "GPL-3.0-only"
@@ -36,6 +36,7 @@ unicode-normalization = "0.1"
 ureq = { version = "3.3", features = ["json"] }
 uuid = { version = "1.18", features = ["serde", "v4"] }
 walkdir = "2.5"
+winres = "0.1"
 
 [profile.release]
 lto = "thin"

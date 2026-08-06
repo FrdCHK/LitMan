@@ -27,6 +27,7 @@ litman group add PATH PAPER_ID ...
 litman group remove PATH PAPER_ID ...
 litman root set DIR
 litman open PAPER_ID
+litman import SOURCE [--provider auto|scixplorer|arxiv] [--file PDF] [--format table|json]
 litman scixplorer token set TOKEN
 litman scixplorer token status|clear
 litman scixplorer search title|doi|bibcode QUERY [--limit N] [--format table|json]
@@ -38,7 +39,11 @@ litman backup DESTINATION
 litman manual
 ```
 
-重复的 `--author` 和 `--keyword` 会保留输入顺序。例如 `--clear title` 会设置一个明确的手工空值。GUI 中的“恢复 PDF 元数据”可删除覆盖并恢复内嵌元数据。`--interactive` 可在终端中依次填写字段。
+重复的 `--author` 和 `--keyword` 会保留输入顺序。例如 `--clear title` 会设置一个明确的手工空值。GUI 中的“恢复 PDF 内嵌元数据”可删除覆盖并恢复内嵌元数据。`--interactive` 可在终端中依次填写字段。
+
+顶层 `import` 命令会自动识别裸 ADS bibcode、现代/旧式 arXiv ID、ADS 摘要链接或 arXiv 摘要/PDF 链接。ADS 导入需要已配置令牌，arXiv 不需要。`--provider` 可强制指定提供方。若 ADS 出版商页面要求浏览器验证，交互终端会打开链接并询问已下载 PDF 的路径；非交互环境请用 `--file PDF` 再次执行。所选文件只会被复制，原文件不变。表格输出显示来源与文献摘要；JSON 是稳定的 `RemoteImportResult`，字段为 `paper`、`provider`、`source_id`、`pdf_source` 和 `relative_path`。
+
+导入固定使用 `BIBCODE.pdf` 或 `arXiv-ID.pdf`，若 ID、路径或哈希已存在则拒绝，不覆盖也不添加编号。PDF 与元数据一起提交，失败或取消后两者都不会留下。
 
 SciXplorer 命令完全可选。`token set` 会把个人 ADS Developer API 令牌以明文保存到所选文献库的 TOML 配置中；在命令行输入的令牌还可能被 shell 历史记录保留。`token status` 绝不会输出令牌本身。`search` 按一个指定字段查询 ADS，默认最多返回 20 条，最大为 100 条。`import` 按 bibcode 下载 BibTeX，保存后填充指定文献的元数据。`bibtex` 把已存储条目原样写到标准输出，因此可重定向到 `.bib` 文件。`open` 用系统浏览器打开已存储的 SciXplorer 摘要链接。搜索和导入需要已配置的令牌；输出本地 BibTeX、打开已存储链接及 PDF 替换都不需要令牌。
 
@@ -54,6 +59,8 @@ litman --config D:/library/library.toml group create "论文/方法"
 litman --config D:/library/library.toml group add "论文/方法" 1b3a 57c2
 litman --config D:/library/library.toml rate 1b3a 5
 litman --config D:/library/library.toml scixplorer token set 个人令牌
+litman --config D:/library/library.toml import https://arxiv.org/abs/0908.3637 --format json
+litman --config D:/library/library.toml import 2003ApJ...587..208R --provider scixplorer
 litman --config D:/library/library.toml scixplorer search doi "10.1111/j.1365-2966.2008.13087.x"
 litman --config D:/library/library.toml scixplorer import 1b3a 2008MNRAS.386..619C
 litman --config D:/library/library.toml scixplorer bibtex 1b3a > references.bib

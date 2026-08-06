@@ -12,10 +12,11 @@ use uuid::Uuid;
 
 use crate::config::{Config, Language};
 use crate::model::{EmbeddedMetadata, FileStatus, Group, Paper, PaperUpdate};
+use crate::remote_import::ArxivMetadata;
 use crate::scixplorer::parse_bibtex;
 use crate::{LitmanError, Result, ScixplorerClient, scixplorer_url};
 
-const DATABASE_SCHEMA_VERSION: i64 = 2;
+const DATABASE_SCHEMA_VERSION: i64 = 3;
 
 const PAPER_COLUMNS: &str = "
     id, relative_path, file_size, modified_unix_ms, content_hash, file_status,
@@ -23,7 +24,7 @@ const PAPER_COLUMNS: &str = "
     container_title, volume, issue, pages, doi, url, language, keywords_json, notes,
     importance, page_count, pdf_version, encrypted, creator, producer,
     embedded_json, manual_overrides_json, created_at, updated_at,
-    bibtex, bibcode, bibtex_fields_json";
+    bibtex, bibcode, bibtex_fields_json, arxiv_id, arxiv_atom_xml, arxiv_fields_json";
 
 #[derive(Debug, Clone, Default)]
 pub struct ListFilter {
@@ -74,6 +75,7 @@ impl Library {
             config,
             connection,
         };
+        library.recover_remote_imports()?;
         library.recover_pdf_replacements()?;
         Ok(library)
     }
@@ -224,6 +226,7 @@ impl Library {
         }
         paper.manual_overrides.remove(field);
         paper.bibtex_fields.remove(field);
+        paper.arxiv_fields.remove(field);
         paper.updated_at = now();
         self.save_metadata(&paper)?;
         self.rebuild_search_text(&paper.id)?;
@@ -235,8 +238,10 @@ impl Library {
         let bibcode = metadata.bibcode.clone();
         let mut paper = self.get_paper(id_or_prefix)?;
         let populated = metadata.populated_fields();
+        let previous_fields = paper.bibtex_fields.clone();
+        let mut applied_fields = BTreeSet::new();
 
-        for field in paper.bibtex_fields.clone() {
+        for field in previous_fields.clone() {
             if !populated.contains(&field) {
                 reset_from_embedded(&mut paper, &field);
                 paper.manual_overrides.remove(&field);
@@ -246,8 +251,12 @@ impl Library {
         macro_rules! import_scalar {
             ($name:literal, $field:ident) => {
                 if let Some(value) = metadata.$field {
-                    paper.$field = Some(value);
-                    paper.manual_overrides.insert($name.into());
+                    if !paper.manual_overrides.contains($name) || previous_fields.contains($name) {
+                        paper.$field = Some(value);
+                        paper.manual_overrides.remove($name);
+                        paper.arxiv_fields.remove($name);
+                        applied_fields.insert($name.into());
+                    }
                 }
             };
         }
@@ -261,17 +270,88 @@ impl Library {
         import_scalar!("doi", doi);
         import_scalar!("url", url);
         import_scalar!("language", language);
-        if let Some(authors) = metadata.authors {
+        if let Some(authors) = metadata.authors
+            && (!paper.manual_overrides.contains("authors") || previous_fields.contains("authors"))
+        {
             paper.authors = authors;
-            paper.manual_overrides.insert("authors".into());
+            paper.manual_overrides.remove("authors");
+            paper.arxiv_fields.remove("authors");
+            applied_fields.insert("authors".into());
         }
-        if let Some(keywords) = metadata.keywords {
+        if let Some(keywords) = metadata.keywords
+            && (!paper.manual_overrides.contains("keywords")
+                || previous_fields.contains("keywords"))
+        {
             paper.keywords = keywords;
-            paper.manual_overrides.insert("keywords".into());
+            paper.manual_overrides.remove("keywords");
+            paper.arxiv_fields.remove("keywords");
+            applied_fields.insert("keywords".into());
         }
         paper.bibtex = Some(bibtex.to_owned());
         paper.bibcode = Some(bibcode);
-        paper.bibtex_fields = populated;
+        paper.bibtex_fields = applied_fields;
+        paper.updated_at = now();
+        self.save_metadata(&paper)?;
+        self.rebuild_search_text(&paper.id)?;
+        self.get_paper(&paper.id)
+    }
+
+    pub(crate) fn store_arxiv_metadata(
+        &mut self,
+        id_or_prefix: &str,
+        metadata: ArxivMetadata,
+        raw_atom: &str,
+    ) -> Result<Paper> {
+        let mut paper = self.get_paper(id_or_prefix)?;
+        let populated = metadata.populated_fields();
+        let previous_fields = paper.arxiv_fields.clone();
+        let mut applied_fields = BTreeSet::new();
+
+        for field in previous_fields.clone() {
+            if !populated.contains(&field) {
+                reset_from_embedded(&mut paper, &field);
+                paper.manual_overrides.remove(&field);
+            }
+        }
+
+        macro_rules! import_scalar {
+            ($name:literal, $field:ident) => {
+                if let Some(value) = metadata.$field {
+                    if !paper.manual_overrides.contains($name) || previous_fields.contains($name) {
+                        paper.$field = Some(value);
+                        paper.manual_overrides.remove($name);
+                        paper.bibtex_fields.remove($name);
+                        applied_fields.insert($name.into());
+                    }
+                }
+            };
+        }
+        import_scalar!("title", title);
+        import_scalar!("abstract_text", abstract_text);
+        import_scalar!("publication_date", publication_date);
+        import_scalar!("container_title", container_title);
+        import_scalar!("doi", doi);
+        import_scalar!("url", url);
+        if let Some(authors) = metadata.authors
+            && (!paper.manual_overrides.contains("authors") || previous_fields.contains("authors"))
+        {
+            paper.authors = authors;
+            paper.manual_overrides.remove("authors");
+            paper.bibtex_fields.remove("authors");
+            applied_fields.insert("authors".into());
+        }
+        if let Some(keywords) = metadata.keywords
+            && (!paper.manual_overrides.contains("keywords")
+                || previous_fields.contains("keywords"))
+        {
+            paper.keywords = keywords;
+            paper.manual_overrides.remove("keywords");
+            paper.bibtex_fields.remove("keywords");
+            applied_fields.insert("keywords".into());
+        }
+        paper.arxiv_id = Some(metadata.arxiv_id);
+        paper.arxiv_atom_xml = Some(raw_atom.to_owned());
+        paper.arxiv_fields = applied_fields;
         paper.updated_at = now();
         self.save_metadata(&paper)?;
         self.rebuild_search_text(&paper.id)?;
@@ -701,13 +781,14 @@ impl Library {
         self.rebuild_search_text(&paper.id)
     }
 
-    fn save_metadata(&self, paper: &Paper) -> Result<()> {
+    pub(crate) fn save_metadata(&self, paper: &Paper) -> Result<()> {
         self.connection.execute(
             "UPDATE papers SET title=?1, authors_json=?2, abstract_text=?3,
              publication_date=?4, container_title=?5, volume=?6, issue=?7, pages=?8,
              doi=?9, url=?10, language=?11, keywords_json=?12, notes=?13,
              manual_overrides_json=?14, updated_at=?15, bibtex=?16, bibcode=?17,
-             bibtex_fields_json=?18 WHERE id=?19",
+             bibtex_fields_json=?18, arxiv_id=?19, arxiv_atom_xml=?20,
+             arxiv_fields_json=?21 WHERE id=?22",
             params![
                 paper.title,
                 serde_json::to_string(&paper.authors)?,
@@ -727,13 +808,16 @@ impl Library {
                 paper.bibtex,
                 paper.bibcode,
                 serde_json::to_string(&paper.bibtex_fields)?,
+                paper.arxiv_id,
+                paper.arxiv_atom_xml,
+                serde_json::to_string(&paper.arxiv_fields)?,
                 paper.id,
             ],
         )?;
         Ok(())
     }
 
-    fn rebuild_search_text(&self, paper_id: &str) -> Result<()> {
+    pub(crate) fn rebuild_search_text(&self, paper_id: &str) -> Result<()> {
         let paper = self.get_paper(paper_id)?;
         let group_names = self
             .groups_for_paper(paper_id)?
@@ -756,6 +840,7 @@ impl Library {
             paper.keywords,
             paper.notes.into_iter().collect(),
             paper.bibcode.into_iter().collect(),
+            paper.arxiv_id.into_iter().collect(),
             paper.creator.into_iter().collect(),
             paper.producer.into_iter().collect(),
             group_names,
@@ -846,7 +931,7 @@ fn configure_connection(connection: &Connection) -> Result<()> {
 }
 
 fn migrate(connection: &Connection) -> Result<()> {
-    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    let mut version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > DATABASE_SCHEMA_VERSION {
         return Err(LitmanError::InvalidConfig(format!(
             "database schema {version} is newer than this LitMan build"
@@ -890,7 +975,10 @@ fn migrate(connection: &Connection) -> Result<()> {
                 updated_at TEXT NOT NULL,
                 bibtex TEXT,
                 bibcode TEXT,
-                bibtex_fields_json TEXT NOT NULL DEFAULT '[]'
+                 bibtex_fields_json TEXT NOT NULL DEFAULT '[]',
+                 arxiv_id TEXT,
+                 arxiv_atom_xml TEXT,
+                 arxiv_fields_json TEXT NOT NULL DEFAULT '[]'
              );
              CREATE INDEX papers_hash_idx ON papers(content_hash);
              CREATE INDEX papers_status_idx ON papers(file_status);
@@ -909,9 +997,10 @@ fn migrate(connection: &Connection) -> Result<()> {
                 group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
                 PRIMARY KEY(paper_id, group_id)
              );
-             PRAGMA user_version = 2;",
+             PRAGMA user_version = 3;",
         )?;
         transaction.commit()?;
+        return Ok(());
     }
     if version == 1 {
         let transaction = connection.unchecked_transaction()?;
@@ -922,6 +1011,53 @@ fn migrate(connection: &Connection) -> Result<()> {
              PRAGMA user_version = 2;",
         )?;
         transaction.commit()?;
+        version = 2;
+    }
+    if version == 2 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE papers ADD COLUMN arxiv_id TEXT;
+             ALTER TABLE papers ADD COLUMN arxiv_atom_xml TEXT;
+             ALTER TABLE papers ADD COLUMN arxiv_fields_json TEXT NOT NULL DEFAULT '[]';
+             PRAGMA user_version = 3;",
+        )?;
+        normalize_legacy_bibtex_overrides(&transaction)?;
+        transaction.commit()?;
+    }
+    Ok(())
+}
+
+fn normalize_legacy_bibtex_overrides(connection: &Connection) -> Result<()> {
+    let columns = {
+        let mut statement = connection.prepare("PRAGMA table_info(papers)")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<BTreeSet<_>, _>>()?
+    };
+    if !columns.contains("manual_overrides_json") || !columns.contains("bibtex_fields_json") {
+        return Ok(());
+    }
+    let rows = {
+        let mut statement = connection
+            .prepare("SELECT id, manual_overrides_json, bibtex_fields_json FROM papers")?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (id, manual_json, bibtex_json) in rows {
+        let mut manual: BTreeSet<String> = serde_json::from_str(&manual_json).unwrap_or_default();
+        let bibtex: BTreeSet<String> = serde_json::from_str(&bibtex_json).unwrap_or_default();
+        manual.retain(|field| !bibtex.contains(field));
+        connection.execute(
+            "UPDATE papers SET manual_overrides_json = ?1 WHERE id = ?2",
+            params![serde_json::to_string(&manual)?, id],
+        )?;
     }
     Ok(())
 }
@@ -956,6 +1092,9 @@ fn row_to_paper(row: &Row<'_>) -> rusqlite::Result<Paper> {
         bibtex: row.get(31)?,
         bibcode: row.get(32)?,
         bibtex_fields: serde_json::from_str(&row.get::<_, String>(33)?).unwrap_or_default(),
+        arxiv_id: row.get(34)?,
+        arxiv_atom_xml: row.get(35)?,
+        arxiv_fields: serde_json::from_str(&row.get::<_, String>(36)?).unwrap_or_default(),
         importance: row.get::<_, Option<i64>>(21)?.map(|value| value as u8),
         page_count: row.get::<_, Option<i64>>(22)?.map(|value| value as u32),
         pdf_version: row.get(23)?,
@@ -976,6 +1115,7 @@ fn apply_update(paper: &mut Paper, update: PaperUpdate) {
                 paper.$field = value.map(clean);
                 paper.manual_overrides.insert(stringify!($field).into());
                 paper.bibtex_fields.remove(stringify!($field));
+                paper.arxiv_fields.remove(stringify!($field));
             }
         };
     }
@@ -994,11 +1134,13 @@ fn apply_update(paper: &mut Paper, update: PaperUpdate) {
         paper.authors = clean_list(authors);
         paper.manual_overrides.insert("authors".into());
         paper.bibtex_fields.remove("authors");
+        paper.arxiv_fields.remove("authors");
     }
     if let Some(keywords) = update.keywords {
         paper.keywords = clean_list(keywords);
         paper.manual_overrides.insert("keywords".into());
         paper.bibtex_fields.remove("keywords");
+        paper.arxiv_fields.remove("keywords");
     }
 }
 
@@ -1007,6 +1149,7 @@ fn apply_embedded_to_unmodified(paper: &mut Paper) {
         ($field:ident) => {
             if !paper.manual_overrides.contains(stringify!($field))
                 && !paper.bibtex_fields.contains(stringify!($field))
+                && !paper.arxiv_fields.contains(stringify!($field))
             {
                 paper.$field = paper.embedded.$field.clone();
             }
@@ -1211,6 +1354,40 @@ mod tests {
         assert!(columns.contains(&"bibtex".into()));
         assert!(columns.contains(&"bibcode".into()));
         assert!(columns.contains(&"bibtex_fields_json".into()));
+        assert!(columns.contains(&"arxiv_id".into()));
+        assert!(columns.contains(&"arxiv_atom_xml".into()));
+        assert!(columns.contains(&"arxiv_fields_json".into()));
+    }
+
+    #[test]
+    fn schema_two_migration_adds_arxiv_and_normalizes_legacy_provenance() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE papers(
+                    id TEXT PRIMARY KEY,
+                    manual_overrides_json TEXT NOT NULL,
+                    bibtex_fields_json TEXT NOT NULL
+                 );
+                 INSERT INTO papers VALUES(
+                    'paper', '[\"title\",\"notes\"]', '[\"title\"]'
+                 );
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        migrate(&connection).unwrap();
+        let (manual, arxiv): (String, String) = connection
+            .query_row(
+                "SELECT manual_overrides_json, arxiv_fields_json FROM papers WHERE id='paper'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<BTreeSet<String>>(&manual).unwrap(),
+            BTreeSet::from(["notes".into()])
+        );
+        assert_eq!(arxiv, "[]");
     }
 
     #[test]
@@ -1243,7 +1420,7 @@ mod tests {
         assert_eq!(imported.bibcode.as_deref(), Some("2008MNRAS.386..619C"));
         assert_eq!(imported.bibtex.as_deref(), Some(bibtex));
         assert!(imported.bibtex_fields.contains("title"));
-        assert!(imported.manual_overrides.contains("title"));
+        assert!(!imported.manual_overrides.contains("title"));
         assert_eq!(library.paper_bibtex(&id).unwrap(), bibtex);
         assert_eq!(
             library
@@ -1267,6 +1444,15 @@ mod tests {
             .unwrap();
         assert!(!edited.bibtex_fields.contains("title"));
         assert_eq!(edited.bibtex.as_deref(), Some(bibtex));
+        let refreshed = library
+            .store_bibtex(
+                &id,
+                r#"@ARTICLE{2008MNRAS.386..619C, title={New ADS title}, year={2008}}"#,
+            )
+            .unwrap();
+        assert_eq!(refreshed.title.as_deref(), Some("Manual title"));
+        assert!(refreshed.manual_overrides.contains("title"));
+        assert!(!refreshed.bibtex_fields.contains("title"));
         let reset = library.reset_field(&id, "title").unwrap();
         assert_eq!(reset.title.as_deref(), Some("Embedded title"));
     }

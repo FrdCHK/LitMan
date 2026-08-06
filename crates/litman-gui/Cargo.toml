@@ -24,3 +24,6 @@ eframe = { workspace = true, features = ["accesskit", "default_fonts", "glow", "
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[build-dependencies]
+winres.workspace = true

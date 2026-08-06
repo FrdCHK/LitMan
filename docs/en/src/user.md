@@ -43,11 +43,20 @@ Select a row to edit title, ordered authors, abstract, date, journal or conferen
 LitMan reads PDF Info and common XMP, Dublin Core, and PRISM fields. The effective value is chosen in this order:
 
 1. manual value;
-2. XMP value;
-3. PDF Info value;
-4. blank.
+2. ADS/SciXplorer BibTeX or arXiv Atom value;
+3. XMP value;
+4. PDF Info value;
+5. blank.
 
-A rescan never overwrites a manual or SciXplorer-imported value. **Reset to PDF** removes the selected field's manual or BibTeX override and reveals the current embedded value. For a PDF without metadata, its filename appears only as a visual placeholder; it is not saved as the title until you enter one.
+A rescan never overwrites a manual or externally imported value. **Reset to embedded PDF** removes the selected field's manual and external provenance and reveals the current embedded value. For a PDF without metadata, its filename appears only as a visual placeholder; it is not saved as the title until you enter one.
+
+## Import a paper from ADS/SciXplorer or arXiv
+
+Choose **Import paper** and enter one identifier or URL. LitMan auto-detects ADS bibcodes such as `2003ApJ...587..208R`, modern or legacy arXiv IDs such as `0908.3637` or `astro-ph/9901234v2`, ADS abstract URLs, and arXiv `/abs/` or `/pdf/` URLs. arXiv import needs no credentials. ADS import is enabled only when a personal ADS token is configured under **SciXplorer settings**.
+
+An ADS import retrieves exact-record BibTeX and its `esources` list. It prefers `PUB_PDF`, and uses `EPRINT_PDF` only when the publisher source is explicitly unavailable. A publisher login or HTML page opens the existing browser fallback: download the publisher PDF, then choose **Select downloaded PDF**; the selected source file remains unchanged. An arXiv import retrieves the Atom record and PDF together, including ordered authors, abstract, date, DOI, journal reference, categories, canonical URL, and raw Atom response.
+
+Successful files are created directly under the library root as `BIBCODE.pdf` or `arXiv-ID.pdf` (legacy `/` becomes `_`). LitMan never overwrites or invents a numbered name: an existing normalized provider ID, destination path, or content hash refuses the complete import. Metadata and PDF commit together; cancellation or failure leaves no record or destination. Network downloads are HTTPS-only, bounded to 256 MiB, checked for `%PDF-`, parsed, and hashed before installation. ADS tokens are sent only to ADS API requests and never to publisher gateways, arXiv, or redirects.
 
 ## Optional SciXplorer metadata and BibTeX
 
@@ -79,6 +88,8 @@ Importance is optional. Choose one through five stars, where five means most imp
 
 Status filters show present, missing, or error records. Importance and group filters can be combined with search.
 
+**Newly added** (**本次新增**) is an independent GUI filter that combines with search, group, importance, and status filters. It contains records first created by scans or successful online imports since this LitMan process started. Existing records, recognized moves, metadata-only SciXplorer updates, and PDF updates are not included. The set is kept separately for each library while the process runs and is discarded when LitMan exits.
+
 ## Open and remove
 
 **Open** asks the operating system to open the PDF in its default viewer. **Remove database record** only removes LitMan's record after confirmation. All ordinary actions keep PDFs read-only; only the explicit confirmed **Update PDF** workflow moves and replaces them as described above.
@@ -97,4 +108,4 @@ Opening a newer LitMan database with an older program may be refused. Before upg
 
 If a file is missing, confirm the root and scan again. For a parse error, the diagnostic remains visible; enter metadata manually if needed. If the database is busy, close other LitMan processes and retry. If a GUI renderer fails on Windows, LitMan retries with OpenGL automatically.
 
-LitMan performs no telemetry. All ordinary library, PDF, search, organization, and backup work stays local. SciXplorer search/import sends the configured token and query/bibcode to the ADS API. Explicit publisher replacement contacts SciXplorer and the resolved publisher without forwarding the ADS token; browser fallback also contacts those sites through the system browser.
+LitMan performs no telemetry. All ordinary library, PDF, search, organization, and backup work stays local. SciXplorer search/import sends the configured token and query/bibcode to the ADS API. arXiv import sends the requested ID to `export.arxiv.org` and downloads the PDF from `arxiv.org`. Online import and explicit publisher replacement contact the selected remote sources without forwarding the ADS token; browser fallback also contacts those sites through the system browser.

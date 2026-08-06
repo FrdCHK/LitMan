@@ -30,6 +30,8 @@ pub enum LitmanError {
     BibtexNotFound(String),
     #[error("PDF replacement: {0}")]
     PdfReplacement(String),
+    #[error("remote import: {0}")]
+    RemoteImport(String),
     #[error("PDF replacement destination {path} belongs to another LitMan record ({paper_id})")]
     PdfTargetOwnedByAnotherRecord { path: PathBuf, paper_id: String },
     #[error(
@@ -69,6 +71,7 @@ impl LitmanError {
             Self::Scixplorer(detail) => format!("SciXplorer：{detail}"),
             Self::BibtexNotFound(id) => format!("文献没有可用的 BibTeX：{id}"),
             Self::PdfReplacement(detail) => format!("PDF 替换：{detail}"),
+            Self::RemoteImport(detail) => format!("远程导入：{detail}"),
             Self::PdfTargetOwnedByAnotherRecord { path, paper_id } => format!(
                 "PDF 替换目标 {} 属于另一条 LitMan 记录（{}）",
                 path.display(),

@@ -28,7 +28,7 @@ rm -rf %{buildroot}
 install -Dpm0755 target/release/litman %{buildroot}%{_bindir}/litman
 install -Dpm0755 target/release/litman-gui %{buildroot}%{_bindir}/litman-gui
 install -Dpm0644 packaging/linux/litman.desktop %{buildroot}%{_datadir}/applications/litman.desktop
-install -Dpm0644 packaging/linux/litman.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/litman.svg
+install -Dpm0644 packaging/icons/litman.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/litman.svg
 mkdir -p %{buildroot}%{_docdir}/litman/en %{buildroot}%{_docdir}/litman/zh-CN
 cp -a docs/en/book/. %{buildroot}%{_docdir}/litman/en/
 cp -a docs/zh-CN/book/. %{buildroot}%{_docdir}/litman/zh-CN/

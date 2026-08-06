@@ -89,6 +89,13 @@ pub struct Paper {
     pub bibcode: Option<String>,
     /// Metadata fields most recently populated from `bibtex`.
     pub bibtex_fields: BTreeSet<String>,
+    /// Canonical arXiv identifier supplied to the remote import operation.
+    pub arxiv_id: Option<String>,
+    /// Raw Atom response returned by the arXiv API.
+    #[serde(skip_serializing)]
+    pub arxiv_atom_xml: Option<String>,
+    /// Metadata fields most recently populated from the arXiv API.
+    pub arxiv_fields: BTreeSet<String>,
     pub importance: Option<u8>,
     pub page_count: Option<u32>,
     pub pdf_version: Option<String>,
@@ -177,4 +184,45 @@ pub struct ScanReport {
     pub missing: usize,
     pub errors: usize,
     pub cancelled: bool,
+    /// Database identifiers created by this scan. This is intentionally not persisted.
+    pub added_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteImportProvider {
+    Auto,
+    Scixplorer,
+    Arxiv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteProvider {
+    Scixplorer,
+    Arxiv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemotePdfSource {
+    PubPdf,
+    EprintPdf,
+    ArxivPdf,
+    LocalFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteIdentifier {
+    pub provider: RemoteProvider,
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteImportResult {
+    pub paper: Paper,
+    pub provider: RemoteProvider,
+    pub source_id: String,
+    pub pdf_source: RemotePdfSource,
+    pub relative_path: String,
 }

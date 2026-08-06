@@ -5,13 +5,14 @@
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleDisplayName</key><string>LitMan</string>
   <key>CFBundleExecutable</key><string>litman-gui</string>
+  <key>CFBundleIconFile</key><string>litman.icns</string>
   <key>CFBundleIdentifier</key><string>org.litman.desktop</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>LitMan</string>
   <key>CFBundleGetInfoString</key><string>Local-first literature manager with safe confirmed PDF replacement.</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>2.1.0</string>
-  <key>CFBundleVersion</key><string>2.1.0</string>
+  <key>CFBundleShortVersionString</key><string>2.2.0</string>
+  <key>CFBundleVersion</key><string>2.2.0</string>
   <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Jingdong Zhang. Licensed under GPLv3.</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>

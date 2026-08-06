@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use litman_core::{
     Config, FileStatus, Language, Library, ListFilter, LitmanError, Locale, Paper, PaperUpdate,
-    PdfReplacementPlan, PdfReplacementResult, ScanEvent, ScanOptions, ScixplorerRecord,
-    ScixplorerSearchField, default_config_path,
+    PdfReplacementPlan, PdfReplacementResult, RemoteImportProvider, RemoteImportResult, ScanEvent,
+    ScanOptions, ScixplorerRecord, ScixplorerSearchField, default_config_path,
 };
 use serde::Serialize;
 
@@ -94,6 +94,33 @@ enum Command {
     Open {
         #[arg(help = "Full UUID or unambiguous prefix / 完整 UUID 或无歧义前缀")]
         paper_id: String,
+    },
+    #[command(
+        about = "Import a PDF and metadata from ADS/SciXplorer or arXiv / 从 ADS/SciXplorer 或 arXiv 导入 PDF 和元数据"
+    )]
+    Import {
+        #[arg(help = "Bibcode, arXiv ID, or supported URL / Bibcode、arXiv ID 或受支持的 URL")]
+        source: String,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "auto",
+            help = "Identifier provider / 标识符提供方"
+        )]
+        provider: ImportProviderArg,
+        #[arg(
+            long,
+            value_name = "PDF",
+            help = "Use a publisher PDF downloaded in a browser / 使用浏览器下载的出版商 PDF"
+        )]
+        file: Option<PathBuf>,
+        #[arg(
+            long,
+            value_enum,
+            default_value = "table",
+            help = "Output format / 输出格式"
+        )]
+        format: OutputFormat,
     },
     #[command(about = "Search and import from SciXplorer / 从 SciXplorer 搜索和导入")]
     Scixplorer {
@@ -319,6 +346,13 @@ enum ScixplorerFieldArg {
     Title,
     Doi,
     Bibcode,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ImportProviderArg {
+    Auto,
+    Scixplorer,
+    Arxiv,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -582,6 +616,21 @@ fn run(cli: Cli) -> litman_core::Result<()> {
             } => update_pdf(&mut library, &paper_id, file.as_deref(), yes, locale)?,
         },
         Command::Open { paper_id } => library.open_pdf(&paper_id)?,
+        Command::Import {
+            source,
+            provider,
+            file,
+            format,
+        } => {
+            let result = import_remote(
+                &mut library,
+                &source,
+                provider.into(),
+                file.as_deref(),
+                locale,
+            )?;
+            print_remote_import(&result, format, locale)?;
+        }
         Command::Backup { destination } => println!("{}", library.backup(destination)?.display()),
         Command::Manual => open_manual(language)?,
     }
@@ -793,6 +842,82 @@ fn prompt_downloaded_pdf(locale: Locale) -> litman_core::Result<Option<PathBuf>>
     io::stdin().read_line(&mut input)?;
     let value = input.trim();
     Ok((!value.is_empty()).then(|| PathBuf::from(value)))
+}
+
+fn import_remote(
+    library: &mut Library,
+    source: &str,
+    provider: RemoteImportProvider,
+    file: Option<&Path>,
+    locale: Locale,
+) -> litman_core::Result<RemoteImportResult> {
+    match library.import_remote(source, provider, file, None) {
+        Ok(result) => Ok(result),
+        Err(LitmanError::PublisherPdfBrowserRequired { gateway_url })
+            if file.is_none() && io::stdin().is_terminal() =>
+        {
+            eprintln!(
+                "{}\n{gateway_url}",
+                if locale.0 == Language::ZhCn {
+                    "出版商要求浏览器验证。正在打开链接；下载后请输入 PDF 路径。"
+                } else {
+                    "Publisher authentication is required. Opening the link; enter the PDF path after downloading it."
+                }
+            );
+            open::that_detached(&gateway_url).map_err(|error| {
+                LitmanError::RemoteImport(format!(
+                    "could not open publisher link {gateway_url}: {error}"
+                ))
+            })?;
+            let selected = prompt_downloaded_pdf(locale)?.ok_or_else(|| {
+                LitmanError::RemoteImport(
+                    "publisher download selection was cancelled; no library files changed".into(),
+                )
+            })?;
+            library.import_remote(source, provider, Some(&selected), None)
+        }
+        Err(LitmanError::PublisherPdfBrowserRequired { gateway_url }) => {
+            Err(LitmanError::RemoteImport(format!(
+                "publisher authentication is required; open {gateway_url} and rerun with --file PDF"
+            )))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn print_remote_import(
+    result: &RemoteImportResult,
+    format: OutputFormat,
+    locale: Locale,
+) -> litman_core::Result<()> {
+    if matches!(format, OutputFormat::Json) {
+        println!("{}", serde_json::to_string_pretty(result)?);
+        return Ok(());
+    }
+    println!(
+        "{}: {:?} / {}\n{}: {:?}\n{}: {}",
+        if locale.0 == Language::ZhCn {
+            "来源"
+        } else {
+            "Source"
+        },
+        result.provider,
+        result.source_id,
+        if locale.0 == Language::ZhCn {
+            "PDF 来源"
+        } else {
+            "PDF source"
+        },
+        result.pdf_source,
+        if locale.0 == Language::ZhCn {
+            "相对路径"
+        } else {
+            "Relative path"
+        },
+        result.relative_path
+    );
+    print_details(&result.paper, &[], locale);
+    Ok(())
 }
 
 fn print_pdf_replacement_result(result: &PdfReplacementResult, locale: Locale) {
@@ -1038,6 +1163,16 @@ impl From<ScixplorerFieldArg> for ScixplorerSearchField {
     }
 }
 
+impl From<ImportProviderArg> for RemoteImportProvider {
+    fn from(value: ImportProviderArg) -> Self {
+        match value {
+            ImportProviderArg::Auto => Self::Auto,
+            ImportProviderArg::Scixplorer => Self::Scixplorer,
+            ImportProviderArg::Arxiv => Self::Arxiv,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1101,5 +1236,34 @@ mod tests {
     #[test]
     fn table_cells_cannot_create_extra_rows_or_columns() {
         assert_eq!(clean_table_cell("A\tB\nC\rD"), "A B C D");
+    }
+
+    #[test]
+    fn unified_import_command_accepts_provider_file_and_json() {
+        let cli = Cli::try_parse_from([
+            "litman",
+            "import",
+            "2003ApJ...587..208R",
+            "--provider",
+            "scixplorer",
+            "--file",
+            "download.pdf",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        let Command::Import {
+            source,
+            provider,
+            file,
+            format,
+        } = cli.command
+        else {
+            panic!("expected import command");
+        };
+        assert_eq!(source, "2003ApJ...587..208R");
+        assert!(matches!(provider, ImportProviderArg::Scixplorer));
+        assert_eq!(file, Some(PathBuf::from("download.pdf")));
+        assert!(matches!(format, OutputFormat::Json));
     }
 }

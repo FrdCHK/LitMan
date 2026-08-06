@@ -85,6 +85,8 @@ fn scixplorer_update_pdf_requires_confirmation_and_preserves_selected_download()
     let declined_noninteractive = litman(&[
         "--config".into(),
         path(&config),
+        "--language".into(),
+        "en".into(),
         "scixplorer".into(),
         "update-pdf".into(),
         id.clone(),
@@ -99,6 +101,8 @@ fn scixplorer_update_pdf_requires_confirmation_and_preserves_selected_download()
     let replaced = success(&[
         "--config".into(),
         path(&config),
+        "--language".into(),
+        "en".into(),
         "scixplorer".into(),
         "update-pdf".into(),
         id,
@@ -108,7 +112,7 @@ fn scixplorer_update_pdf_requires_confirmation_and_preserves_selected_download()
     ]);
     let stdout = String::from_utf8(replaced.stdout).unwrap();
     let stderr = String::from_utf8(replaced.stderr).unwrap();
-    assert!(stderr.contains("WARNING"));
+    assert!(stderr.contains("WARNING"), "unexpected stderr: {stderr}");
     assert!(stdout.contains("Active PDF"));
     assert!(stdout.contains("Backup PDF"));
     assert!(

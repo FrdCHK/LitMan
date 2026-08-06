@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter()][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '2.1.0',
+    [Parameter()][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '2.2.0',
     [Parameter()][switch]$Sign,
     [Parameter()][switch]$SkipValidation,
     [Parameter()][string]$WixBin
@@ -103,6 +103,72 @@ function Get-SourceRevision([string]$ProjectDir) {
     }
 }
 
+function Get-MsiSingleRow([string]$MsiPath, [string]$Query) {
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $database = $null
+    $view = $null
+    try {
+        $database = $installer.GetType().InvokeMember(
+            'OpenDatabase', 'InvokeMethod', $null, $installer, @($MsiPath, 0)
+        )
+        $view = $database.GetType().InvokeMember(
+            'OpenView', 'InvokeMethod', $null, $database, @($Query)
+        )
+        $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+        $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        if ($null -eq $record) {
+            throw "MSI query returned no rows: $Query"
+        }
+        $fieldCount = $record.GetType().InvokeMember(
+            'FieldCount', 'GetProperty', $null, $record, $null
+        )
+        $values = for ($index = 1; $index -le $fieldCount; $index++) {
+            $record.GetType().InvokeMember(
+                'StringData', 'GetProperty', $null, $record, @($index)
+            )
+        }
+        $extraRecord = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        if ($null -ne $extraRecord) {
+            throw "MSI query returned more than one row: $Query"
+        }
+        return $values -join '|'
+    }
+    finally {
+        if ($null -ne $view) {
+            $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($view)
+        }
+        if ($null -ne $database) {
+            [void][Runtime.InteropServices.Marshal]::ReleaseComObject($database)
+        }
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($installer)
+    }
+}
+
+function Assert-MsiShortcuts([string]$MsiPath) {
+    $checks = @(
+        @{
+            Id = 'LitManShortcut'
+            Expected = 'LitManShortcut|ApplicationProgramsFolder|StartMenuShortcut|[INSTALLDIR]litman-gui.exe|'
+        },
+        @{
+            Id = 'LitManDesktopShortcut'
+            Expected = 'LitManDesktopShortcut|DesktopFolder|DesktopShortcut|[INSTALLDIR]litman-gui.exe|'
+        }
+    )
+    foreach ($check in $checks) {
+        $query = "SELECT ``Shortcut``,``Directory_``,``Component_``,``Target``,``Icon_`` FROM ``Shortcut`` WHERE ``Shortcut``='$($check.Id)'"
+        $actual = Get-MsiSingleRow $MsiPath $query
+        if ($actual -ne $check.Expected) {
+            throw "MSI shortcut table mismatch for $($check.Id): $actual"
+        }
+    }
+    $programsDirectory = Get-MsiSingleRow $MsiPath "SELECT ``Directory``,``Directory_Parent`` FROM ``Directory`` WHERE ``Directory``='ApplicationProgramsFolder'"
+    if ($programsDirectory -ne 'ApplicationProgramsFolder|ProgramMenuFolder') {
+        throw "MSI Start Menu directory is not rooted in ProgramMenuFolder: $programsDirectory"
+    }
+}
+
 $projectDir = Split-Path -Parent $PSScriptRoot
 $distDir = Join-Path $projectDir 'dist'
 $wixBuildDir = Join-Path $projectDir 'target\packaging\windows'
@@ -179,6 +245,7 @@ try {
     $lightArguments += $wixObjects
     & $light @lightArguments
     Assert-NativeSuccess 'MSI linking'
+    Assert-MsiShortcuts $msi
 
     if ($Sign) {
         $thumbprint = $env:LITMAN_CERT_THUMBPRINT

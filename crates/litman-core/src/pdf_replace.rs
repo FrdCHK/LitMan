@@ -917,13 +917,18 @@ mod tests {
         let result = library.replace_pdf_from_file(&id, &publisher).unwrap();
         assert_eq!(
             result.active_path,
-            root.join("嵌套").join(format!("{BIBCODE}.pdf"))
+            root.join("嵌套")
+                .join(format!("{BIBCODE}.pdf"))
+                .canonicalize()
+                .unwrap()
         );
         assert_eq!(
             result.backup_paths,
             vec![
                 root.join(BACKUP_DIRECTORY_NAME)
                     .join(format!("{BIBCODE}_bk.pdf"))
+                    .canonicalize()
+                    .unwrap()
             ]
         );
         assert!(
@@ -958,7 +963,7 @@ mod tests {
         write_pdf(&publisher, "Publisher");
 
         let result = library.replace_pdf_from_file(&id, publisher).unwrap();
-        assert_eq!(result.active_path, occupied);
+        assert_eq!(result.active_path, occupied.canonicalize().unwrap());
         assert_eq!(result.backup_paths.len(), 2);
         assert_eq!(
             result.backup_paths[0]
@@ -990,7 +995,10 @@ mod tests {
                 .iter()
                 .any(|path| path == &result.active_path)
         );
-        assert_eq!(result.active_path, root.join(format!("{BIBCODE}.pdf")));
+        assert_eq!(
+            result.active_path,
+            root.join(format!("{BIBCODE}.pdf")).canonicalize().unwrap()
+        );
         assert!(
             root.join(BACKUP_DIRECTORY_NAME)
                 .join(format!("{BIBCODE}_bk.pdf"))
@@ -1049,7 +1057,10 @@ mod tests {
                 .to_string_lossy(),
             format!("{BIBCODE}_bk_2.pdf")
         );
-        assert_eq!(result.active_path, root.join(format!("{BIBCODE}.pdf")));
+        assert_eq!(
+            result.active_path,
+            root.join(format!("{BIBCODE}.pdf")).canonicalize().unwrap()
+        );
     }
 
     #[test]

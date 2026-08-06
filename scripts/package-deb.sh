@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-2.1.0}"
+version="${1:-2.2.0}"
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 stage_dir="$project_dir/target/packaging/debian/litman_${version}_amd64"
 dist_dir="$project_dir/dist"
@@ -24,7 +24,7 @@ mkdir -p "$stage_dir/DEBIAN" "$stage_dir/usr/bin" \
 sed "s/@VERSION@/$version/g" packaging/debian/control.in > "$stage_dir/DEBIAN/control"
 install -m 0755 target/release/litman target/release/litman-gui "$stage_dir/usr/bin/"
 install -m 0644 packaging/linux/litman.desktop "$stage_dir/usr/share/applications/"
-install -m 0644 packaging/linux/litman.svg "$stage_dir/usr/share/icons/hicolor/scalable/apps/"
+install -m 0644 packaging/icons/litman.svg "$stage_dir/usr/share/icons/hicolor/scalable/apps/"
 cp -R docs/en/book/. "$stage_dir/usr/share/doc/litman/en/"
 cp -R docs/zh-CN/book/. "$stage_dir/usr/share/doc/litman/zh-CN/"
 install -m 0644 LICENSE crates/litman-gui/assets/LICENSE-NOTO.txt "$stage_dir/usr/share/licenses/litman/"

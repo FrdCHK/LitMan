@@ -4,7 +4,7 @@
 
 LitMan 是由三个 crate 组成的 Cargo workspace。`litman-core` 负责全部策略和数据访问；两个界面均不直接写 SQL 或解析 PDF。`litman-cli` 把稳定命令映射到核心服务。`litman-gui` 使用 eframe/egui，嵌入 Noto Sans CJK SC 字体，并在线程中扫描。
 
-依赖策略优先选择纯 Rust 与内置组件。SQLite 通过 `rusqlite` 静态捆绑，`lopdf` 读取 PDF，`quick-xml` 解析 XMP；可选的 ADS/SciXplorer HTTPS 客户端使用 `ureq` 与 Rustls。不使用 Python、Node.js、JVM、数据库服务器或遥测。新增依赖前必须审查许可证、维护状况、最低平台、二进制大小和安全性。
+依赖策略优先选择纯 Rust 与内置组件。SQLite 通过 `rusqlite` 静态捆绑，`lopdf` 读取 PDF，`quick-xml` 解析 XMP 和 arXiv Atom；可选的 ADS/SciXplorer 与 arXiv HTTPS 客户端使用 `ureq` 与 Rustls。不使用 Python、Node.js、JVM、数据库服务器或遥测。新增依赖前必须审查许可证、维护状况、最低平台、二进制大小和安全性。
 
 ## 配置与路径
 
@@ -16,13 +16,15 @@ LitMan 是由三个 crate 组成的 Cargo workspace。`litman-core` 负责全部
 
 SQLite 连接启用外键、写入繁忙超时和 `journal_mode=DELETE`，因此关闭后数据库是单个可移植文件。`PRAGMA user_version` 标识迁移。每个迁移在事务中执行；必须新增向前迁移，不能改写版本 1。
 
-`papers` 保存 UUID、规范化相对路径、大小、纳秒修改时间、BLAKE3 哈希、存在/缺失/错误状态、诊断、时间戳、最终字段、原始内嵌元数据 JSON、手工字段集合、可选的原始 BibTeX/bibcode 与 BibTeX 字段来源集合，以及受 1–5 约束的可选重要程度。作者和关键词是有序 JSON 数组。`groups` 使用邻接表并保证同级名称唯一；`paper_groups` 实现多对多关系，记录或分组删除时级联。
+`papers` 保存 UUID、规范化相对路径、大小、修改时间、BLAKE3 哈希、状态、诊断、时间戳、最终字段、原始内嵌元数据、手工字段集合、可选的原始 BibTeX/bibcode 与字段来源、可选的 arXiv ID/原始 Atom/字段来源，以及受 1–5 约束的重要程度。作者和关键词是有序 JSON 数组。迁移 v3 新增 arXiv 列，并从手工来源集合中移除旧版 BibTeX 来源字段。
 
 模式变化必须保持从所有受支持系统复制来的数据库可用。新增迁移测试应从前一 `user_version` 开始，执行升级并验证外键和约束。
 
 ## 元数据与扫描协调
 
-提取器读取 PDF 尾部 Info 字典和 XMP 元数据流。识别 XMP、Dublin Core 与 PRISM 等命名空间；未知原始值保留用于诊断。BibTeX 导入会解析 ADS 引用键和常见书目信息，同时原样保留完整导出。每个字段采用最近一次手工或 BibTeX 覆盖，其后依次为 XMP、PDF Info 和空值。手工字段集合会保护用户值和 BibTeX 值不被扫描覆盖；独立的 BibTeX 字段集合用于准确显示来源，之后手工修改某字段时会清除其 BibTeX 来源。
+提取器读取 PDF Info 和 XMP 元数据流。ADS BibTeX 与 arXiv Atom 导入会保留原始响应和逐字段来源。每个字段依次采用手工、外部 ADS/arXiv、XMP、PDF Info、空值。之后手工修改会清除该字段的外部来源；重置会清除手工及外部来源并恢复内嵌数据。
+
+`remote_import` 负责严格解析提供方/标识符、获取元数据、暂存并验证 PDF、冲突检查及事务/恢复清单边界。ADS 令牌仅由 `ScixplorerClient` 附加到 `api.adsabs.harvard.edu` 请求；出版商及 arXiv 使用独立且不含令牌的 HTTPS agent。固定文件名、规范根目录检查及事务内再次检查内容哈希可防止覆盖和路径穿越。浏览器后备 PDF 只复制，不移动或修改。
 
 增量扫描比较大小与修改时间，对变化文件计算哈希，并按需提取元数据。具有相同哈希且唯一的缺失记录会被视为移动；多条同哈希记录只是标记为副本，绝不合并。未观察到的文件改为缺失但保留元数据。解析失败仅影响相应记录。
 
@@ -34,7 +36,7 @@ SQLite 连接启用外键、写入繁忙超时和 `journal_mode=DELETE`，因此
 
 ## GUI 线程与无障碍
 
-GUI 在界面线程中持有一个 `Library`。扫描和 PDF 替换工作线程根据配置打开独立连接，通过通道发送有界消息；SciXplorer 元数据工作线程只接收克隆的 API 客户端及查询/bibcode。替换使用不含令牌的独立 HTTPS agent，设置全局超时、重定向和响应大小限制，并在写操作前再次检查已经确认的计划。每个扫描文件之间检查原子取消标记。输入框应有文字标签，保留键盘导航与焦点指示，不能只靠颜色表达操作。
+GUI 在界面线程中持有一个 `Library`。扫描、远程导入和 PDF 替换线程根据配置打开独立连接并通过通道报告结果。“本次新增”ID 集合只存在于 GUI 视图模型，按规范配置路径分开，绝不序列化。扫描和远程导入使用原子取消标记。输入框应有文字标签，保留键盘导航与焦点指示，不能只靠颜色表达操作。
 
 Windows 构建同时包含 WGPU 和 Glow，启动时优先 WGPU，失败后用 Glow 重试。Linux 发布构建仅用 X11/Glow，以保持 CentOS 基线。
 
@@ -46,7 +48,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-单元测试覆盖配置/路径、迁移、元数据优先级、手工覆盖、重要程度、嵌套分组、Unicode/中文搜索和扫描协调。PDF 样例必须覆盖 Info、XMP/PRISM、中文字段与文件名、无元数据、冲突、损坏/加密、副本、移动和缺失。CLI 集成测试断言 JSON 键与本地化表格。GUI 测试应先隔离视图模型逻辑，再进行平台启动、键盘访问、取消和系统打开 PDF 的冒烟测试。
+单元测试覆盖配置/路径、迁移、标识符解析、元数据优先级、手工覆盖、重要程度、嵌套分组、Unicode/中文搜索和扫描协调。远程测试使用确定性的本地端点覆盖 ADS JSON/BibTeX/esources、arXiv Atom、重定向、不可用/登录响应、限制、损坏数据、取消和副本拒绝。CLI 集成测试断言稳定 JSON 与本地化表格；GUI 测试先隔离会话筛选逻辑。
 
 运行 `cargo run -p litman-core --example generate_fixtures -- target/litman-fixtures` 可生成确定性的完整样例集。`SCENARIOS.txt` 说明移动与缺失测试所需的重命名/移除步骤，并记录加密样例密码。
 

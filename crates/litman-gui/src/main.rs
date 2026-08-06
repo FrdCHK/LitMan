@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,8 +14,9 @@ use egui::{FontData, FontDefinitions, FontFamily};
 use egui_extras::{Column, TableBuilder};
 use litman_core::{
     Config, FileStatus, Group, Language, Library, ListFilter, LitmanError, Locale, Paper,
-    PaperUpdate, PdfReplacementPlan, PdfReplacementResult, ScanEvent, ScanOptions,
-    ScixplorerClient, ScixplorerRecord, ScixplorerSearchField, default_config_path,
+    PaperUpdate, PdfReplacementPlan, PdfReplacementResult, RemoteImportProvider,
+    RemoteImportResult, RemoteProvider, ScanEvent, ScanOptions, ScixplorerClient, ScixplorerRecord,
+    ScixplorerSearchField, default_config_path, parse_remote_identifier,
 };
 
 const USER_MANUAL_EN: &str = include_str!("../../../docs/en/src/user.md");
@@ -165,6 +166,18 @@ enum PdfReplacementWorkerMessage {
     Done(litman_core::Result<PdfReplacementResult>),
 }
 
+enum RemoteImportWorkerMessage {
+    Done(litman_core::Result<RemoteImportResult>),
+}
+
+#[derive(Default)]
+struct RemoteImportWindowState {
+    input: String,
+    busy: bool,
+    error: String,
+    browser_fallback: Option<String>,
+}
+
 struct PdfReplacementWindowState {
     plan: PdfReplacementPlan,
     acknowledged: bool,
@@ -213,6 +226,8 @@ struct LitManApp {
     sort_column: SortColumn,
     sort_ascending: bool,
     status_filter: Option<FileStatus>,
+    newly_added_filter: bool,
+    session_added_by_library: HashMap<PathBuf, HashSet<String>>,
     new_group_path: String,
     assignment_group: Option<String>,
     reset_field: String,
@@ -228,6 +243,9 @@ struct LitManApp {
     scixplorer_receiver: Option<Receiver<ScixplorerWorkerMessage>>,
     pdf_replacement: Option<PdfReplacementWindowState>,
     pdf_replacement_receiver: Option<Receiver<PdfReplacementWorkerMessage>>,
+    remote_import: Option<RemoteImportWindowState>,
+    remote_import_receiver: Option<Receiver<RemoteImportWorkerMessage>>,
+    remote_import_cancel: Option<Arc<AtomicBool>>,
     show_scixplorer_settings: bool,
     scixplorer_token_input: String,
     show_about: bool,
@@ -250,6 +268,8 @@ impl LitManApp {
             sort_column: SortColumn::Importance,
             sort_ascending: false,
             status_filter: None,
+            newly_added_filter: false,
+            session_added_by_library: HashMap::new(),
             new_group_path: String::new(),
             assignment_group: None,
             reset_field: "title".into(),
@@ -265,6 +285,9 @@ impl LitManApp {
             scixplorer_receiver: None,
             pdf_replacement: None,
             pdf_replacement_receiver: None,
+            remote_import: None,
+            remote_import_receiver: None,
+            remote_import_cancel: None,
             show_scixplorer_settings: false,
             scixplorer_token_input: String::new(),
             show_about: false,
@@ -279,6 +302,10 @@ impl LitManApp {
         match Library::open(&path) {
             Ok(library) => {
                 self.locale = Locale::new(library.config().language);
+                let path = path.canonicalize().unwrap_or(path);
+                self.session_added_by_library
+                    .entry(path.clone())
+                    .or_default();
                 self.config_path = Some(path);
                 self.library = Some(library);
                 self.group_filter = None;
@@ -289,6 +316,11 @@ impl LitManApp {
                 self.scixplorer_receiver = None;
                 self.pdf_replacement = None;
                 self.pdf_replacement_receiver = None;
+                if let Some(cancel) = self.remote_import_cancel.take() {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                self.remote_import = None;
+                self.remote_import_receiver = None;
                 self.show_scixplorer_settings = false;
                 self.scixplorer_token_input.clear();
                 self.auto_scan_pending = true;
@@ -314,7 +346,14 @@ impl LitManApp {
         let papers_result = library.list_papers(&filter);
         let groups_result = library.list_groups();
         match papers_result {
-            Ok(papers) => {
+            Ok(mut papers) => {
+                if self.newly_added_filter {
+                    let newly_added = self
+                        .config_path
+                        .as_ref()
+                        .and_then(|path| self.session_added_by_library.get(path));
+                    papers.retain(|paper| is_newly_added(&paper.id, newly_added));
+                }
                 self.papers = papers;
                 self.sort_papers();
                 self.selected
@@ -382,6 +421,7 @@ impl LitManApp {
         if self.scan_receiver.is_some()
             || self.pdf_replacement_receiver.is_some()
             || self.pdf_replacement.is_some()
+            || self.remote_import_receiver.is_some()
         {
             return;
         }
@@ -414,6 +454,7 @@ impl LitManApp {
 
     fn poll_scan(&mut self) {
         let mut finished = None;
+        let mut added_ids = Vec::new();
         if let Some(receiver) = self.scan_receiver.as_ref() {
             while let Ok(message) = receiver.try_recv() {
                 match message {
@@ -432,6 +473,7 @@ impl LitManApp {
                         self.message = format!("{path}: {message}");
                     }
                     WorkerMessage::Event(ScanEvent::Finished(report)) => {
+                        added_ids.extend(report.added_ids.iter().cloned());
                         self.message = format!(
                             "{}: +{}, ~{}, moved {}, errors {}",
                             self.locale.text("scan.complete"),
@@ -444,6 +486,14 @@ impl LitManApp {
                     WorkerMessage::Done(result) => finished = Some(result),
                 }
             }
+        }
+        if !added_ids.is_empty()
+            && let Some(path) = self.config_path.clone()
+        {
+            self.session_added_by_library
+                .entry(path)
+                .or_default()
+                .extend(added_ids);
         }
         if let Some(result) = finished {
             if let Err(error) = result {
@@ -461,8 +511,10 @@ impl LitManApp {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(self.locale.text("app.title"));
                 ui.separator();
-                let replacement_idle =
-                    self.pdf_replacement_receiver.is_none() && self.pdf_replacement.is_none();
+                let replacement_idle = self.pdf_replacement_receiver.is_none()
+                    && self.pdf_replacement.is_none()
+                    && self.remote_import_receiver.is_none()
+                    && self.scan_receiver.is_none();
                 if ui
                     .add_enabled(
                         replacement_idle,
@@ -502,6 +554,16 @@ impl LitManApp {
                         .clicked()
                     {
                         self.begin_scan(true);
+                    }
+                    if ui
+                        .add_enabled(
+                            replacement_idle && self.scan_receiver.is_none(),
+                            egui::Button::new(dual(self.locale, "Import paper", "导入文献")),
+                        )
+                        .clicked()
+                    {
+                        self.remote_import
+                            .get_or_insert_with(RemoteImportWindowState::default);
                     }
                     if ui
                         .add_enabled(
@@ -671,6 +733,25 @@ impl LitManApp {
                         "请先在中间列表中选择一篇或多篇文献。",
                     ));
                 }
+                ui.separator();
+                if ui
+                    .checkbox(
+                        &mut self.newly_added_filter,
+                        dual(self.locale, "Newly added", "本次新增"),
+                    )
+                    .changed()
+                {
+                    self.reload();
+                }
+                let newly_added_count = self
+                    .config_path
+                    .as_ref()
+                    .and_then(|path| self.session_added_by_library.get(path))
+                    .map_or(0, HashSet::len);
+                ui.small(format!(
+                    "{}: {newly_added_count}",
+                    dual(self.locale, "Added since startup", "本次启动后新增")
+                ));
                 ui.separator();
                 ui.heading(self.locale.text("importance"));
                 if ui
@@ -1298,7 +1379,11 @@ impl LitManApp {
                                 }
                             });
                         if ui
-                            .button(dual(self.locale, "Reset to PDF", "恢复 PDF 元数据"))
+                            .button(dual(
+                                self.locale,
+                                "Reset to embedded PDF",
+                                "恢复 PDF 内嵌元数据",
+                            ))
                             .clicked()
                             && let Some(library) = self.library.as_mut()
                         {
@@ -1368,10 +1453,12 @@ impl LitManApp {
                                     "keywords",
                                     "notes",
                                 ] {
-                                    let source = if paper.bibtex_fields.contains(field_name) {
-                                        "SciXplorer/BibTeX"
-                                    } else if paper.manual_overrides.contains(field_name) {
+                                    let source = if paper.manual_overrides.contains(field_name) {
                                         dual(self.locale, "manual", "手工")
+                                    } else if paper.arxiv_fields.contains(field_name) {
+                                        "arXiv/Atom"
+                                    } else if paper.bibtex_fields.contains(field_name) {
+                                        "ADS/SciXplorer/BibTeX"
                                     } else {
                                         match paper
                                             .embedded
@@ -1399,6 +1486,18 @@ impl LitManApp {
                                         ui.label(format!("{key}: {}", values.join("; ")));
                                     }
                                 });
+                                if let Some(arxiv_id) = &paper.arxiv_id {
+                                    ui.label(format!("arXiv ID: {arxiv_id}"));
+                                }
+                                if let Some(atom) = &paper.arxiv_atom_xml {
+                                    ui.collapsing("arXiv Atom", |ui| {
+                                        ui.add(
+                                            egui::Label::new(atom)
+                                                .selectable(true)
+                                                .wrap(),
+                                        );
+                                    });
+                                }
                             },
                         );
                     }
@@ -1897,6 +1996,241 @@ impl LitManApp {
         });
     }
 
+    fn start_remote_import_worker(&mut self, local_pdf: Option<PathBuf>) {
+        if self.remote_import_receiver.is_some()
+            || self.scan_receiver.is_some()
+            || self.pdf_replacement_receiver.is_some()
+        {
+            return;
+        }
+        let Some(config_path) = self.config_path.clone() else {
+            return;
+        };
+        let Some(state) = self.remote_import.as_mut() else {
+            return;
+        };
+        let input = state.input.trim().to_owned();
+        state.busy = true;
+        state.error.clear();
+        state.browser_fallback = None;
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let thread_cancellation = cancellation.clone();
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = Library::open(config_path).and_then(|mut library| {
+                library.import_remote(
+                    &input,
+                    RemoteImportProvider::Auto,
+                    local_pdf.as_deref(),
+                    Some(&thread_cancellation),
+                )
+            });
+            let _ = sender.send(RemoteImportWorkerMessage::Done(result));
+        });
+        self.remote_import_cancel = Some(cancellation);
+        self.remote_import_receiver = Some(receiver);
+    }
+
+    fn poll_remote_import(&mut self) {
+        let Some(receiver) = self.remote_import_receiver.as_ref() else {
+            return;
+        };
+        let message = match receiver.try_recv() {
+            Ok(message) => message,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => RemoteImportWorkerMessage::Done(Err(
+                LitmanError::RemoteImport("remote import worker stopped unexpectedly".into()),
+            )),
+        };
+        self.remote_import_receiver = None;
+        self.remote_import_cancel = None;
+        let RemoteImportWorkerMessage::Done(result) = message;
+        match result {
+            Ok(result) => {
+                if let Some(path) = self.config_path.clone() {
+                    self.session_added_by_library
+                        .entry(path)
+                        .or_default()
+                        .insert(result.paper.id.clone());
+                }
+                self.message = if self.locale.0 == Language::ZhCn {
+                    format!(
+                        "已从 {} 导入 {}（PDF 来源：{:?}）。",
+                        remote_provider_label(self.locale, result.provider),
+                        result.source_id,
+                        result.pdf_source
+                    )
+                } else {
+                    format!(
+                        "Imported {} from {} (PDF source: {:?}).",
+                        result.source_id,
+                        remote_provider_label(self.locale, result.provider),
+                        result.pdf_source
+                    )
+                };
+                self.remote_import = None;
+                self.reload();
+                self.selected.clear();
+                self.selected.insert(result.paper.id.clone());
+                self.editor = EditorState::from_paper(&result.paper);
+            }
+            Err(LitmanError::PublisherPdfBrowserRequired { gateway_url }) => {
+                if let Some(state) = self.remote_import.as_mut() {
+                    state.busy = false;
+                    state.browser_fallback = Some(gateway_url);
+                    state.error = dual(
+                        self.locale,
+                        "Publisher authentication is required. Open the link, download the PDF, then select it below.",
+                        "出版商要求浏览器验证。请打开链接并下载 PDF，然后在下方选择该文件。",
+                    )
+                    .into();
+                }
+            }
+            Err(error) => {
+                if let Some(state) = self.remote_import.as_mut() {
+                    state.busy = false;
+                    state.error = error.localized(self.locale.0);
+                }
+            }
+        }
+    }
+
+    fn remote_import_window(&mut self, root: &mut egui::Ui) {
+        let Some(mut state) = self.remote_import.take() else {
+            return;
+        };
+        let locale = self.locale;
+        let detected = parse_remote_identifier(&state.input, RemoteImportProvider::Auto);
+        let token_ready = scixplorer_token_configured(self.library.as_ref());
+        let provider_ready = detected.as_ref().is_ok_and(|identifier| {
+            identifier.provider != RemoteProvider::Scixplorer || token_ready
+        });
+        let mut submit = false;
+        let mut cancel = false;
+        let mut close = false;
+        let mut open_publisher = false;
+        let mut select_download = false;
+        let mut configure_token = false;
+        egui::Window::new(dual(locale, "Import paper", "导入文献"))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(560.0)
+            .show(root.ctx(), |ui| {
+                ui.label(dual(
+                    locale,
+                    "Enter an ADS bibcode, arXiv ID, or supported abstract/PDF URL.",
+                    "请输入 ADS bibcode、arXiv ID，或受支持的摘要/PDF 链接。",
+                ));
+                let response = ui.add_enabled(
+                    !state.busy,
+                    egui::TextEdit::singleline(&mut state.input)
+                        .hint_text("2003ApJ...587..208R / 0908.3637 / https://…")
+                        .desired_width(f32::INFINITY),
+                );
+                if response.changed() {
+                    state.error.clear();
+                    state.browser_fallback = None;
+                }
+                match &detected {
+                    Ok(identifier) => {
+                        ui.label(format!(
+                            "{}: {} · {}: {}",
+                            dual(locale, "Provider", "提供方"),
+                            remote_provider_label(locale, identifier.provider),
+                            dual(locale, "Identifier", "标识符"),
+                            identifier.source_id
+                        ));
+                        if identifier.provider == RemoteProvider::Scixplorer && !token_ready {
+                            ui.colored_label(
+                                egui::Color32::YELLOW,
+                                dual(
+                                    locale,
+                                    "ADS imports require a configured API token.",
+                                    "ADS 导入需要先配置 API 令牌。",
+                                ),
+                            );
+                            configure_token = ui
+                                .button(dual(locale, "Configure token", "配置令牌"))
+                                .clicked();
+                        }
+                    }
+                    Err(error) if !state.input.trim().is_empty() => {
+                        ui.colored_label(egui::Color32::YELLOW, error.localized(locale.0));
+                    }
+                    Err(_) => {}
+                }
+                if state.busy {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(dual(
+                            locale,
+                            "Downloading and validating metadata and PDF…",
+                            "正在下载并验证元数据和 PDF…",
+                        ));
+                    });
+                }
+                if !state.error.is_empty() {
+                    ui.colored_label(egui::Color32::RED, &state.error);
+                }
+                if state.browser_fallback.is_some() {
+                    ui.horizontal_wrapped(|ui| {
+                        open_publisher = ui
+                            .button(dual(locale, "Open publisher link", "打开出版商链接"))
+                            .clicked();
+                        select_download = ui
+                            .button(dual(locale, "Select downloaded PDF", "选择已下载的 PDF"))
+                            .clicked();
+                        close = ui.button(dual(locale, "Close", "关闭")).clicked();
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        submit = ui
+                            .add_enabled(
+                                !state.busy && provider_ready,
+                                egui::Button::new(dual(locale, "Import", "导入")),
+                            )
+                            .clicked();
+                        if state.busy {
+                            cancel = ui.button(dual(locale, "Cancel", "取消")).clicked();
+                        } else {
+                            close = ui.button(dual(locale, "Close", "关闭")).clicked();
+                        }
+                    });
+                }
+            });
+
+        if configure_token {
+            self.show_scixplorer_settings = true;
+        }
+        if open_publisher
+            && let Some(url) = state.browser_fallback.as_deref()
+            && let Err(error) = open::that_detached(url)
+        {
+            state.error = error.to_string();
+        }
+        if cancel {
+            if let Some(flag) = &self.remote_import_cancel {
+                flag.store(true, Ordering::Relaxed);
+            }
+            state.error = dual(locale, "Cancelling…", "正在取消…").into();
+        }
+        if select_download
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("PDF", &["pdf"])
+                .pick_file()
+        {
+            self.remote_import = Some(state);
+            self.start_remote_import_worker(Some(path));
+            return;
+        }
+        if submit {
+            self.remote_import = Some(state);
+            self.start_remote_import_worker(None);
+        } else if !close {
+            self.remote_import = Some(state);
+        }
+    }
+
     fn start_scixplorer_search(
         &mut self,
         client: ScixplorerClient,
@@ -2316,6 +2650,7 @@ impl eframe::App for LitManApp {
         self.poll_scan();
         self.poll_scixplorer();
         self.poll_pdf_replacement();
+        self.poll_remote_import();
         if self.auto_scan_pending {
             self.auto_scan_pending = false;
             self.begin_scan(false);
@@ -2336,12 +2671,14 @@ impl eframe::App for LitManApp {
         }
         self.group_rename_window(root);
         self.scixplorer_window(root);
+        self.remote_import_window(root);
         self.pdf_replacement_window(root);
         self.scixplorer_settings_window(root);
         self.about_window(root);
         if self.scan_receiver.is_some()
             || self.scixplorer_receiver.is_some()
             || self.pdf_replacement_receiver.is_some()
+            || self.remote_import_receiver.is_some()
         {
             root.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
@@ -2484,6 +2821,17 @@ fn scixplorer_field_label(locale: Locale, field: ScixplorerSearchField) -> &'sta
 
 fn scixplorer_token_configured(library: Option<&Library>) -> bool {
     library.is_some_and(|library| library.config().scixplorer_api_token.is_some())
+}
+
+fn remote_provider_label(locale: Locale, provider: RemoteProvider) -> &'static str {
+    match provider {
+        RemoteProvider::Scixplorer => "ADS/SciXplorer",
+        RemoteProvider::Arxiv => dual(locale, "arXiv", "arXiv"),
+    }
+}
+
+fn is_newly_added(id: &str, session_ids: Option<&HashSet<String>>) -> bool {
+    session_ids.is_some_and(|ids| ids.contains(id))
 }
 
 fn argument_config() -> Option<PathBuf> {
@@ -2778,5 +3126,41 @@ mod tests {
         let html = fs::read_to_string(path).expect("embedded manual should be readable");
         assert!(html.contains("LitMan 用户手册"));
         assert!(html.contains("备份"));
+    }
+
+    #[test]
+    fn newly_added_membership_is_session_only_and_library_specific() {
+        let first_library = PathBuf::from("first.toml");
+        let second_library = PathBuf::from("second.toml");
+        let mut sessions = HashMap::<PathBuf, HashSet<String>>::new();
+        sessions
+            .entry(first_library.clone())
+            .or_default()
+            .insert("paper-a".into());
+        sessions
+            .entry(second_library.clone())
+            .or_default()
+            .insert("paper-b".into());
+
+        assert!(is_newly_added("paper-a", sessions.get(&first_library)));
+        assert!(!is_newly_added("paper-b", sessions.get(&first_library)));
+        assert!(is_newly_added("paper-b", sessions.get(&second_library)));
+        assert!(!is_newly_added("paper-a", None));
+    }
+
+    #[test]
+    fn import_detection_distinguishes_token_gated_ads_from_arxiv() {
+        let ads = parse_remote_identifier(
+            "https://ui.adsabs.harvard.edu/abs/2003ApJ...587..208R/abstract",
+            RemoteImportProvider::Auto,
+        )
+        .unwrap();
+        let arxiv = parse_remote_identifier(
+            "https://arxiv.org/pdf/0908.3637",
+            RemoteImportProvider::Auto,
+        )
+        .unwrap();
+        assert_eq!(ads.provider, RemoteProvider::Scixplorer);
+        assert_eq!(arxiv.provider, RemoteProvider::Arxiv);
     }
 }

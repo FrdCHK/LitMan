@@ -17,4 +17,4 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && cargo install mdbook --version 0.4.52 --locked
 
 WORKDIR /workspace
-CMD ["/bin/bash", "/workspace/scripts/build-centos7.sh", "2.1.0"]
+CMD ["/bin/bash", "/workspace/scripts/build-centos7.sh", "2.2.0"]

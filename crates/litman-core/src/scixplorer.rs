@@ -19,10 +19,14 @@ pub struct ScixplorerClient {
 
 impl ScixplorerClient {
     pub fn new(token: impl Into<String>) -> Result<Self> {
-        Self::with_api_base(token, ADS_API_BASE)
+        Self::with_api_base(token, ADS_API_BASE, false)
     }
 
-    fn with_api_base(token: impl Into<String>, api_base: impl Into<String>) -> Result<Self> {
+    pub(crate) fn with_api_base(
+        token: impl Into<String>,
+        api_base: impl Into<String>,
+        allow_http: bool,
+    ) -> Result<Self> {
         let token = token.into().trim().to_owned();
         if token.is_empty() || token.chars().any(char::is_control) {
             return Err(LitmanError::MissingScixplorerToken);
@@ -32,6 +36,8 @@ impl ScixplorerClient {
             api_base: api_base.into().trim_end_matches('/').to_owned(),
             agent: ureq::Agent::new_with_config(
                 ureq::Agent::config_builder()
+                    .https_only(!allow_http)
+                    .max_redirects(0)
                     .timeout_global(Some(Duration::from_secs(30)))
                     .build(),
             ),
@@ -133,6 +139,48 @@ impl ScixplorerClient {
         Ok(export)
     }
 
+    pub(crate) fn pdf_sources(&self, bibcode: &str) -> Result<AdsPdfSources> {
+        validate_bibcode(bibcode)?;
+        let authorization = self.authorization();
+        let query = format!("bibcode:\"{}\"", escape_ads_phrase(bibcode.trim()));
+        let url = format!("{}/search/query", self.api_base);
+        let mut response = self
+            .agent
+            .get(url)
+            .header("Authorization", &authorization)
+            .query("q", &query)
+            .query("fl", "bibcode,esources")
+            .query("rows", "2")
+            .call()
+            .map_err(api_error)?;
+        let envelope = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_API_RESPONSE_SIZE)
+            .read_json::<SearchEnvelope>()
+            .map_err(api_error)?;
+        let document = envelope
+            .response
+            .docs
+            .into_iter()
+            .find(|document| document.bibcode == bibcode.trim())
+            .ok_or_else(|| {
+                LitmanError::Scixplorer(format!(
+                    "ADS did not return an exact record for {}",
+                    bibcode.trim()
+                ))
+            })?;
+        let normalized = document
+            .esources
+            .into_iter()
+            .map(|source| source.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
+        Ok(AdsPdfSources {
+            pub_pdf: normalized.contains("pub_pdf"),
+            eprint_pdf: normalized.contains("eprint_pdf"),
+        })
+    }
+
     fn authorization(&self) -> String {
         format!("Bearer {}", self.token)
     }
@@ -152,6 +200,20 @@ pub fn publisher_pdf_url(bibcode: &str) -> Result<String> {
         "https://scixplorer.org/link_gateway/{}/PUB_PDF",
         bibcode.trim()
     ))
+}
+
+pub(crate) fn eprint_pdf_url(bibcode: &str) -> Result<String> {
+    validate_bibcode(bibcode)?;
+    Ok(format!(
+        "https://scixplorer.org/link_gateway/{}/EPRINT_PDF",
+        bibcode.trim()
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AdsPdfSources {
+    pub(crate) pub_pdf: bool,
+    pub(crate) eprint_pdf: bool,
 }
 
 pub(crate) fn validate_bibcode(bibcode: &str) -> Result<()> {
@@ -199,6 +261,8 @@ struct SearchDocument {
     doi: Vec<String>,
     #[serde(rename = "pub")]
     publication: Option<String>,
+    #[serde(default)]
+    esources: Vec<String>,
 }
 
 #[derive(Serialize)]

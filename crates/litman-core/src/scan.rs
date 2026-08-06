@@ -148,7 +148,7 @@ impl Library {
                         )?;
                         report.updated += 1;
                     } else {
-                        self.insert_scanned(ScannedData {
+                        let id = self.insert_scanned(ScannedData {
                             relative_path: &file.relative_path,
                             file_size: file.file_size,
                             modified_unix_ms: file.modified_unix_ms,
@@ -158,6 +158,7 @@ impl Library {
                             duplicate_of: None,
                         })?;
                         report.added += 1;
+                        report.added_ids.push(id);
                     }
                     continue;
                 }
@@ -216,7 +217,7 @@ impl Library {
                 report.moved += 1;
             } else {
                 let duplicate = self.present_id_by_hash(&hash, None)?;
-                self.insert_scanned(ScannedData {
+                let id = self.insert_scanned(ScannedData {
                     relative_path: &file.relative_path,
                     file_size: file.file_size,
                     modified_unix_ms: file.modified_unix_ms,
@@ -226,6 +227,7 @@ impl Library {
                     duplicate_of: duplicate.as_deref(),
                 })?;
                 report.added += 1;
+                report.added_ids.push(id);
             }
         }
 
@@ -342,8 +344,9 @@ mod tests {
         let config_path = temporary.path().join("library.toml");
         let mut library = Library::init(&config_path, Config::new(root.clone())).unwrap();
 
-        library.scan(ScanOptions::default(), None, |_| {}).unwrap();
+        let initial = library.scan(ScanOptions::default(), None, |_| {}).unwrap();
         let paper = library.list_papers(&Default::default()).unwrap().remove(0);
+        assert_eq!(initial.added_ids, vec![paper.id.clone()]);
         library
             .update_paper(
                 &paper.id,
@@ -358,6 +361,7 @@ mod tests {
         fs::rename(&original, &moved).unwrap();
         let report = library.scan(ScanOptions::default(), None, |_| {}).unwrap();
         assert_eq!(report.moved, 1);
+        assert!(report.added_ids.is_empty());
         let moved_paper = library.get_paper(&paper.id).unwrap();
         assert_eq!(moved_paper.relative_path, "nested/moved.pdf");
         assert_eq!(moved_paper.title.as_deref(), Some("手工题名"));
