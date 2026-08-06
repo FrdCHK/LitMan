@@ -1,10 +1,8 @@
 # LitMan
 
-LitMan is a local-first literature manager for existing PDF directories. It provides a native GUI and a scriptable CLI and stores bibliographic edits in a portable SQLite database. Ordinary operations never modify, move, or delete PDFs. An optional SciXplorer integration can search ADS, import BibTeX metadata, and—with a separate warning and confirmation—replace a selected preprint with a validated publisher PDF while preserving displaced files.
+LitMan is a local-first literature manager for existing PDF directories. It provides a native GUI and a scriptable CLI and stores bibliographic edits in a portable SQLite database. Ordinary operations never modify, move, or delete PDFs. An optional SciXplorer integration can search ADS, import BibTeX metadata, and replace a selected preprint with a validated publisher PDF while preserving displaced files.
 
-Author: Jingdong Zhang
-
-The interface, CLI messages, and offline manuals support English and Simplified Chinese. Windows 10 22H2 x64 is the primary release target; Windows 11, macOS 12+, Ubuntu 22.04+, and CentOS 7.9 are also supported.
+The interface, CLI messages, and offline manuals support English and Simplified Chinese. Windows 10 22H2 x64 is the primary release target; Windows 11, Ubuntu 22.04+ are also supported. You can also build for your operating system.
 
 ## Quick start
 
@@ -34,4 +32,4 @@ LitMan has no telemetry or database server. It requires no network for ordinary 
 
 Apart from the separately confirmed **Update PDF** action, PDFs remain read-only. Replacement stages and validates the download, moves every displaced file into the marked top-level `LitMan-backups` directory, updates only the selected database record, and uses a recovery manifest. Config/database backups do not include the PDF tree or `LitMan-backups`; back these up independently. Removing a LitMan record still does not remove its PDF.
 
-Copyright © 2026 Jingdong Zhang. LitMan is licensed under the GNU General Public License version 3; see `LICENSE`. The bundled Noto Sans CJK SC font has its own SIL Open Font License in `crates/litman-gui/assets/LICENSE-NOTO.txt`.
+LitMan is licensed under the GNU General Public License version 3; see `LICENSE`. The bundled Noto Sans CJK SC font has its own SIL Open Font License in `crates/litman-gui/assets/LICENSE-NOTO.txt`.
