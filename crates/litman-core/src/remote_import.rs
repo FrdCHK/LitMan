@@ -21,7 +21,9 @@ use crate::model::{
     RemoteProvider,
 };
 use crate::scan::hash_pdf;
-use crate::scixplorer::{eprint_pdf_url, parse_bibtex, publisher_pdf_url, validate_bibcode};
+use crate::scixplorer::{
+    ads_pdf_url, eprint_pdf_url, parse_bibtex, publisher_pdf_url, validate_bibcode,
+};
 use crate::{LitmanError, Result};
 
 const ARXIV_API_URL: &str = "https://export.arxiv.org/api/query";
@@ -60,6 +62,14 @@ impl RemoteEndpoints {
             .map(|base| format!("{base}/eprint/{bibcode}"))
             .map(Ok)
             .unwrap_or_else(|| eprint_pdf_url(bibcode))
+    }
+
+    fn ads_pdf_url(&self, bibcode: &str) -> Result<String> {
+        self.test_pdf_base
+            .as_ref()
+            .map(|base| format!("{base}/ads/{bibcode}"))
+            .map(Ok)
+            .unwrap_or_else(|| ads_pdf_url(bibcode))
     }
 }
 
@@ -237,7 +247,7 @@ impl Library {
         let destination = root.join(&filename);
         ensure_new_destination(&root, &destination)?;
 
-        let (metadata, remote_pdf, preferred_source) = match identifier.provider {
+        let (metadata, remote_pdfs) = match identifier.provider {
             RemoteProvider::Scixplorer => {
                 let token = self
                     .config()
@@ -257,24 +267,26 @@ impl Library {
                         "ADS BibTeX did not match the requested bibcode",
                     ));
                 }
-                let candidate = if sources.pub_pdf {
-                    Some((
+                let mut candidates = Vec::with_capacity(3);
+                if sources.pub_pdf {
+                    candidates.push((
                         endpoints.publisher_pdf_url(&identifier.source_id)?,
                         RemotePdfSource::PubPdf,
-                    ))
-                } else if sources.eprint_pdf {
-                    Some((
+                    ));
+                }
+                if sources.eprint_pdf {
+                    candidates.push((
                         endpoints.eprint_pdf_url(&identifier.source_id)?,
                         RemotePdfSource::EprintPdf,
-                    ))
-                } else {
-                    None
-                };
-                (
-                    ImportMetadata::Ads { bibtex },
-                    candidate,
-                    (sources.pub_pdf, sources.eprint_pdf),
-                )
+                    ));
+                }
+                if sources.ads_pdf {
+                    candidates.push((
+                        endpoints.ads_pdf_url(&identifier.source_id)?,
+                        RemotePdfSource::AdsPdf,
+                    ));
+                }
+                (ImportMetadata::Ads { bibtex }, candidates)
             }
             RemoteProvider::Arxiv => {
                 let (metadata, atom) = fetch_arxiv_metadata(&identifier.source_id, endpoints)?;
@@ -284,8 +296,7 @@ impl Library {
                         metadata: Box::new(metadata),
                         atom,
                     },
-                    Some((pdf_url, RemotePdfSource::ArxivPdf)),
-                    (false, false),
+                    vec![(pdf_url, RemotePdfSource::ArxivPdf)],
                 )
             }
         };
@@ -296,30 +307,30 @@ impl Library {
                 stage_local_pdf(&root, path, cancellation)?,
                 RemotePdfSource::LocalFile,
             )
-        } else if let Some((url, source)) = remote_pdf {
-            match stage_remote_pdf(
-                &root,
-                &url,
-                source == RemotePdfSource::PubPdf,
-                cancellation,
-                endpoints.allow_http,
-            ) {
-                Ok(staged) => (staged, source),
-                Err(DownloadFailure::Unavailable)
-                    if source == RemotePdfSource::PubPdf && preferred_source.1 =>
-                {
-                    let url = endpoints.eprint_pdf_url(&identifier.source_id)?;
-                    let staged =
-                        stage_remote_pdf(&root, &url, false, cancellation, endpoints.allow_http)
-                            .map_err(download_error)?;
-                    (staged, RemotePdfSource::EprintPdf)
-                }
-                Err(failure) => return Err(download_error(failure)),
-            }
         } else {
-            return Err(import_error(
-                "neither PUB_PDF nor EPRINT_PDF is available for this ADS record",
-            ));
+            if remote_pdfs.is_empty() {
+                return Err(import_error(
+                    "none of PUB_PDF, EPRINT_PDF, or ADS_PDF is available for this ADS record",
+                ));
+            }
+            let mut downloaded = None;
+            for (url, source) in remote_pdfs {
+                match stage_remote_pdf(
+                    &root,
+                    &url,
+                    source == RemotePdfSource::PubPdf,
+                    cancellation,
+                    endpoints.allow_http,
+                ) {
+                    Ok(staged) => {
+                        downloaded = Some((staged, source));
+                        break;
+                    }
+                    Err(DownloadFailure::Unavailable) => {}
+                    Err(failure) => return Err(download_error(failure)),
+                }
+            }
+            downloaded.ok_or_else(|| download_error(DownloadFailure::Unavailable))?
         };
 
         check_cancelled(cancellation)?;
@@ -1530,6 +1541,63 @@ mod tests {
         assert!(requests[2].0.starts_with("/pub/"));
         assert!(requests[3].0.starts_with("/eprint/"));
         assert!(!requests[2].1 && !requests[3].1);
+    }
+
+    #[test]
+    fn ads_uses_ads_pdf_after_earlier_sources_are_unavailable() {
+        const BIBCODE: &str = "2003ApJ...587..208R";
+        let pdf = pdf_bytes("ADS-hosted PDF");
+        let (base, requests, server) = spawn_mock_server(5, move |_method, path, _base| {
+            if path.starts_with("/v1/search/query?") {
+                (
+                    200,
+                    "application/json",
+                    format!(
+                        r#"{{"response":{{"docs":[{{"bibcode":"{BIBCODE}","esources":["PUB_PDF","EPRINT_PDF","ADS_PDF"]}}]}}}}"#
+                    )
+                    .into_bytes(),
+                )
+            } else if path == "/v1/export/bibtex" {
+                (
+                    200,
+                    "application/json",
+                    format!(r#"{{"export":"@ARTICLE{{{BIBCODE}, title={{Paper}}}}"}}"#)
+                        .into_bytes(),
+                )
+            } else if path == format!("/pub/{BIBCODE}") {
+                (404, "text/plain", b"unavailable".to_vec())
+            } else if path == format!("/eprint/{BIBCODE}") {
+                (410, "text/plain", b"gone".to_vec())
+            } else if path == format!("/ads/{BIBCODE}") {
+                (200, "application/pdf", pdf.clone())
+            } else {
+                panic!("unexpected mock request: {path}");
+            }
+        });
+        let temporary = TempDir::new().unwrap();
+        let root = temporary.path().join("papers");
+        fs::create_dir(&root).unwrap();
+        let mut config = crate::Config::new(root);
+        config.scixplorer_api_token = Some("secret-token".into());
+        let mut library = Library::init(temporary.path().join("library.toml"), config).unwrap();
+        let result = library
+            .import_remote_with_endpoints(
+                BIBCODE,
+                RemoteImportProvider::Auto,
+                None,
+                None,
+                &mock_endpoints(&base),
+            )
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(result.pdf_source, RemotePdfSource::AdsPdf);
+        assert_eq!(serde_json::to_value(result.pdf_source).unwrap(), "ads_pdf");
+        let requests = requests.lock().unwrap();
+        assert!(requests[2].0.starts_with("/pub/"));
+        assert!(requests[3].0.starts_with("/eprint/"));
+        assert!(requests[4].0.starts_with("/ads/"));
+        assert!(requests[2..].iter().all(|request| !request.1));
     }
 
     #[test]

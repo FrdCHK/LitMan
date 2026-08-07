@@ -20,10 +20,10 @@ Use Windows 10 22H2 or Windows 11 x64 with Visual Studio 2022 Build Tools (**Des
 Install WiX machine-wide with `winget install --id WiXToolset.WiXToolset --exact --scope machine`. The packaging script discovers WiX through `PATH`, the machine/user `WIX` environment variable, or the standard WiX 3.14 installation directories, so `cargo clean` does not remove it.
 
 ```powershell
-./scripts/package-windows.ps1 -Version 2.2.0
+./scripts/package-windows.ps1 -Version 2.2.1
 ```
 
-The script builds both binaries and manuals, `dist/LitMan-2.2.0-x64.msi`, a standalone `dist/LitMan-2.2.0-portable-x64.exe`, and a portable ZIP containing `LitMan.exe`, `litman-cli.exe`, licenses, and offline manuals. The GUI executable contains the checked-in ICO. The MSI uses the executable's embedded icon for explicit, non-advertised Start Menu and Desktop shortcuts and uses the checked-in ICO for Add/Remove Programs. Shortcut components are rooted in Windows Installer's standard `ProgramMenuFolder` and `DesktopFolder`; `ALLUSERS=1` resolves them to the common Start Menu and public desktop, while their required component key paths remain in `HKCU` like the proven 2.1.0 package. Both shortcuts have uninstall cleanup, and the MSI offers the CLI PATH component. The build reads the finished MSI tables and fails if either shortcut loses its standard shell directory, component, or explicit executable target. Set `LITMAN_CERT_THUMBPRINT` and pass `-Sign` to invoke `signtool`.
+The script builds both binaries and manuals, `dist/LitMan-2.2.1-x64.msi`, a standalone `dist/LitMan-2.2.1-portable-x64.exe`, and a portable ZIP containing `LitMan.exe`, `litman-cli.exe`, licenses, and offline manuals. The GUI executable contains the checked-in ICO. The MSI uses the executable's embedded icon for explicit, non-advertised Start Menu and Desktop shortcuts and uses the checked-in ICO for Add/Remove Programs. Shortcut components are rooted in Windows Installer's standard `ProgramMenuFolder` and `DesktopFolder`; `ALLUSERS=1` resolves them to the common Start Menu and public desktop, while their required component key paths remain in `HKCU` like the proven 2.1.0 package. Both shortcuts have uninstall cleanup, and the MSI offers the CLI PATH component. The build reads the finished MSI tables and fails if either shortcut loses its standard shell directory, component, or explicit executable target. Set `LITMAN_CERT_THUMBPRINT` and pass `-Sign` to invoke `signtool`.
 
 MSI ProductCodes are deterministically derived from the version and source contents. WiX permits same-version major upgrades, so a changed rebuild upgrades an installed package without requiring a manual uninstall; an identical rebuild remains reproducible. Keep the UpgradeCode stable across releases.
 
@@ -39,7 +39,7 @@ Use macOS 12 or newer with Xcode command-line tools, both Rust targets, and mdBo
 
 ```console
 rustup target add x86_64-apple-darwin aarch64-apple-darwin
-./scripts/package-macos.sh 2.2.0
+./scripts/package-macos.sh 2.2.1
 ```
 
 The script combines each binary with `lipo`, creates `LitMan.app`, a DMG, and a PKG. The PKG installs the application plus `/usr/local/bin/litman`. For signing, set `LITMAN_APPLE_IDENTITY` and `LITMAN_INSTALLER_IDENTITY`; notarize the final DMG/PKG with `xcrun notarytool` using credentials kept outside the repository, then staple tickets with `xcrun stapler`.
@@ -51,8 +51,8 @@ Smoke-test on both Intel and Apple Silicon, including Gatekeeper, open-PDF, back
 Install `build-essential`, `pkg-config`, `libx11-dev`, `libxkbcommon-dev`, `libgl1-mesa-dev`, `libdbus-1-dev`, `dpkg-dev`, Rust, and mdBook. Run:
 
 ```console
-./scripts/package-deb.sh 2.2.0
-sudo apt install ./dist/litman_2.2.0_amd64.deb
+./scripts/package-deb.sh 2.2.1
+sudo apt install ./dist/litman_2.2.1_amd64.deb
 ```
 
 The DEB includes both binaries, the desktop entry, icon, licenses, and manuals. `packaging/icons/litman.svg` is the master; `scripts/generate-icons.ps1` regenerates checked-in PNG/ICO/ICNS assets without adding a runtime graphics dependency. Its runtime dependencies deliberately name X11, OpenGL, D-Bus, and `xdg-utils`.

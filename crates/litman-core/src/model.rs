@@ -208,6 +208,7 @@ pub enum RemoteProvider {
 pub enum RemotePdfSource {
     PubPdf,
     EprintPdf,
+    AdsPdf,
     ArxivPdf,
     LocalFile,
 }

@@ -178,6 +178,7 @@ impl ScixplorerClient {
         Ok(AdsPdfSources {
             pub_pdf: normalized.contains("pub_pdf"),
             eprint_pdf: normalized.contains("eprint_pdf"),
+            ads_pdf: normalized.contains("ads_pdf"),
         })
     }
 
@@ -210,10 +211,19 @@ pub(crate) fn eprint_pdf_url(bibcode: &str) -> Result<String> {
     ))
 }
 
+pub(crate) fn ads_pdf_url(bibcode: &str) -> Result<String> {
+    validate_bibcode(bibcode)?;
+    Ok(format!(
+        "https://scixplorer.org/link_gateway/{}/ADS_PDF",
+        bibcode.trim()
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AdsPdfSources {
     pub(crate) pub_pdf: bool,
     pub(crate) eprint_pdf: bool,
+    pub(crate) ads_pdf: bool,
 }
 
 pub(crate) fn validate_bibcode(bibcode: &str) -> Result<()> {
@@ -720,7 +730,12 @@ mod tests {
             scixplorer_url("2008MNRAS.386..619C").unwrap(),
             "https://scixplorer.org/abs/2008MNRAS.386..619C/abstract"
         );
+        assert_eq!(
+            ads_pdf_url("2008MNRAS.386..619C").unwrap(),
+            "https://scixplorer.org/link_gateway/2008MNRAS.386..619C/ADS_PDF"
+        );
         assert!(scixplorer_url("../../settings").is_err());
+        assert!(ads_pdf_url("../../settings").is_err());
     }
 
     #[test]

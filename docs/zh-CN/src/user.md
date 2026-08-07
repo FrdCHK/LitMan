@@ -54,7 +54,7 @@ LitMan 会读取 PDF Info 和常见 XMP、Dublin Core、PRISM 字段。最终显
 
 点击“导入文献”，输入一个标识符或链接。LitMan 会自动识别 ADS bibcode（如 `2003ApJ...587..208R`）、现代或旧式 arXiv ID（如 `0908.3637`、`astro-ph/9901234v2`）、ADS 摘要链接以及 arXiv `/abs/` 或 `/pdf/` 链接。arXiv 导入无需凭据；只有在“SciXplorer 设置”中配置个人 ADS 令牌后，ADS 导入才可用。
 
-ADS 导入会获取精确记录的 BibTeX 和 `esources`，优先使用 `PUB_PDF`；仅当正式版来源明确不可用时才改用 `EPRINT_PDF`。若出版商返回登录页或 HTML，使用浏览器后备流程：下载出版商 PDF 后点击“选择已下载的 PDF”，所选源文件不会改变。arXiv 导入会同时取得 Atom 记录和 PDF，包括有序作者、摘要、日期、DOI、期刊引用、分类、规范链接及原始 Atom 响应。
+ADS 导入会获取精确记录的 BibTeX 和 `esources`，按 `PUB_PDF`、`EPRINT_PDF`、`ADS_PDF` 的顺序尝试已列出的来源；仅当前一个来源明确不可用时才尝试下一个。若出版商返回登录页或 HTML，使用浏览器后备流程：下载出版商 PDF 后点击“选择已下载的 PDF”，所选源文件不会改变。arXiv 导入会同时取得 Atom 记录和 PDF，包括有序作者、摘要、日期、DOI、期刊引用、分类、规范链接及原始 Atom 响应。
 
 成功后，文件在文献库根目录固定命名为 `BIBCODE.pdf` 或 `arXiv-ID.pdf`（旧式 ID 的 `/` 替换为 `_`）。LitMan 不覆盖文件，也不会自动添加编号；若规范化提供方 ID、目标路径或内容哈希已存在，将拒绝整个导入。元数据与 PDF 一起提交，取消或失败后不会留下记录或目标文件。下载仅允许 HTTPS，最大 256 MiB，并在安装前检查 `%PDF-`、解析 PDF 和计算哈希。ADS 令牌只发送给 ADS API，绝不会发送给出版商网关、arXiv 或重定向目标。
 
